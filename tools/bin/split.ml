@@ -24,6 +24,10 @@ type nodeKind =
   | ExprField
   | ExprSetField
   | ExprIfThenElse
+  | ExprWhile
+  | ExprFor
+  | ExprConstraint
+  | ExprCoerce
   | Case
   | TypeRecord
   | TypeVariant
@@ -54,6 +58,10 @@ let kind_to_string = function
   | ExprField -> "expression_field"
   | ExprSetField -> "expression_set_field"
   | ExprIfThenElse -> "expression_if_then_else"
+  | ExprWhile -> "expression_while"
+  | ExprFor -> "expression_for"
+  | ExprConstraint -> "expression_constraint"
+  | ExprCoerce -> "expression_coerce"
   | Case -> "case"
   | TypeRecord -> "type_record"
   | TypeVariant -> "type_variant"
@@ -68,7 +76,7 @@ type node = {kind: nodeKind; range: range; children: node list}
 
 (*
 
-   dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 120
+   dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200
 
    ./cli/bsc -dtypedtree A.res
 *)
@@ -97,6 +105,10 @@ let mk_pattern (pat : pattern) : node =
 
 let mk_long_ident (lid : Longident.t Location.loc) : node =
   {kind = Ident; range = loc_to_range lid.loc; children = []}
+
+(* Should core_type_desc be split up? Less common I think. *)
+let mk_core_type (ct : core_type) : node =
+  {kind = Type; range = loc_to_range ct.ptyp_loc; children = []}
 
 let rec mk_expression (expr : expression) : node =
   let kind, children =
@@ -192,6 +204,23 @@ let rec mk_expression (expr : expression) : node =
         | Some eElse -> [ifNode; thenNode; mk_expression eElse]
       in
       (ExprIfThenElse, children)
+    | Pexp_while (e1, e2) ->
+      let children = [mk_expression e1; mk_expression e2] in
+      (ExprWhile, children)
+    | Pexp_for (p, e1, e2, _, e3) ->
+      let children =
+        [mk_pattern p; mk_expression e1; mk_expression e2; mk_expression e3]
+      in
+      (ExprFor, children)
+    | Pexp_constraint (e, ct) ->
+      let children = [mk_expression e; mk_core_type ct] in
+      (ExprConstraint, children)
+    | Pexp_coerce (e, _, ct) ->
+      let children = [mk_expression e; mk_core_type ct] in
+      (ExprCoerce, children)
+    | Pexp_new _ | Pexp_setinstvar _ | Pexp_override _ | Pexp_poly _ ->
+      (* unused nodes, to be removed *)
+      (Expr, [])
     | _ -> (Expr, [])
   in
   {kind; range = loc_to_range expr.pexp_loc; children}
@@ -219,10 +248,8 @@ let mk_label_declaration (ld : label_declaration) : node =
   let name =
     {kind = Ident; range = loc_to_range ld.pld_name.loc; children = []}
   in
-  (* Should core_type_desc be split up? Less common I think. *)
-  let typeNode =
-    {kind = Type; range = loc_to_range ld.pld_type.ptyp_loc; children = []}
-  in
+
+  let typeNode = mk_core_type ld.pld_type in
 
   {
     kind = LabelDeclaration;
