@@ -21,6 +21,9 @@ type nodeKind =
   | ExprTuple
   | ExprVariant
   | ExprRecord
+  | ExprField
+  | ExprSetField
+  | ExprIfThenElse
   | Case
   | TypeRecord
   | TypeVariant
@@ -48,6 +51,9 @@ let kind_to_string = function
   | ExprTuple -> "expression_tuple"
   | ExprVariant -> "expression_variant"
   | ExprRecord -> "expression_record"
+  | ExprField -> "expression_field"
+  | ExprSetField -> "expression_set_field"
+  | ExprIfThenElse -> "expression_if_then_else"
   | Case -> "case"
   | TypeRecord -> "type_record"
   | TypeVariant -> "type_variant"
@@ -171,6 +177,21 @@ let rec mk_expression (expr : expression) : node =
         | Some ue -> mk_expression ue :: fieldNodes
       in
       (ExprRecord, children)
+    | Pexp_field (e, lid) ->
+      let children = [mk_expression e; mk_long_ident lid] in
+      (ExprField, children)
+    | Pexp_setfield (e1, lid, e2) ->
+      let children = [mk_expression e1; mk_long_ident lid; mk_expression e2] in
+      (ExprSetField, children)
+    | Pexp_ifthenelse (eIf, eThen, eElse) ->
+      let ifNode = mk_expression eIf in
+      let thenNode = mk_expression eThen in
+      let children =
+        match eElse with
+        | None -> [ifNode; thenNode]
+        | Some eElse -> [ifNode; thenNode; mk_expression eElse]
+      in
+      (ExprIfThenElse, children)
     | _ -> (Expr, [])
   in
   {kind; range = loc_to_range expr.pexp_loc; children}
@@ -218,7 +239,7 @@ let mk_type_declaration (td : type_declaration) : node =
 
 let mk_structure_item_descr (desc : structure_item_desc) : node list =
   match desc with
-  (* | Pstr_eval (_, _ -> _ *)
+  | Pstr_eval (e, _) -> [mk_expression e]
   | Pstr_value (rec_flag, bindings) -> bindings |> List.map mk_value_binding
   | Pstr_type (_rec, typeDefns) -> List.map mk_type_declaration typeDefns
   | _ -> []
