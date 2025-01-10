@@ -78,7 +78,7 @@ type node = {kind: nodeKind; range: range; children: node list}
 
    dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200
 
-   ./cli/bsc -dtypedtree A.res
+   ./cli/bsc -dparsetree A.res -only-parse
 *)
 
 let ( >> ) f g x = g (f x)
