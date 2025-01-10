@@ -3,37 +3,80 @@
 open Parsetree
 
 type nodeKind =
+  (* Top level thing *)
   | Structure
+  (* Binding *)
   | ValueBinding
+  (* Identifier, may or may not have dots *)
   | Ident
   | Pattern
   | Expr
+  (* (a) => b *)
   | ExprFun
+  (* [] *)
   | ExprArray
+  (* a *)
   | ExprIdent
+  (* 4 *)
   | ExprConstant
+  (* a ; b *)
   | ExprSeq
+  (* Some(9) *)
   | ExprConstruct
+  (* let a = 5 *)
   | ExprLet
+  (* 4 + 5 *)
   | ExprApply
+  (* switch x {
+     | Case1 => ()
+     | Case2 => ()
+     } *)
   | ExprSwitch
+  (* try {
+       x
+     } catch {
+     | Y(y) => ()
+     }*)
   | ExprTry
+  (* (a,b) *)
   | ExprTuple
+  (* #Foo *)
   | ExprVariant
+  (* { a: 4} *)
   | ExprRecord
+  (* Y.x *)
   | ExprField
+  (* Y.x = 4 *)
   | ExprSetField
+  (* if x { y } else { z } *)
   | ExprIfThenElse
+  (* while x { () }*)
   | ExprWhile
+  (* for x in 1 to 3 {
+       ()
+     }
+  *)
   | ExprFor
+  (* 4 : int *)
   | ExprConstraint
+  (* None :> option<int> *)
   | ExprCoerce
+  (* a["b"] *)
+  | ExprSend
+  (* {"x": 3} *)
+  | ExprLetModule
+  (* | Blah(x) => () *)
   | Case
+  (* type x = { y: int } *)
   | TypeRecord
+  (* type meh = | Blah | Foo *)
   | TypeVariant
+  (* type a *)
   | TypeAbstract
   | TypeOpen
+  (* y: int (record field) *)
   | LabelDeclaration
+  (* int *)
   | Type
 
 let kind_to_string = function
@@ -62,6 +105,7 @@ let kind_to_string = function
   | ExprFor -> "expression_for"
   | ExprConstraint -> "expression_constraint"
   | ExprCoerce -> "expression_coerce"
+  | ExprSend -> "expression_send"
   | Case -> "case"
   | TypeRecord -> "type_record"
   | TypeVariant -> "type_variant"
@@ -218,6 +262,14 @@ let rec mk_expression (expr : expression) : node =
     | Pexp_coerce (e, _, ct) ->
       let children = [mk_expression e; mk_core_type ct] in
       (ExprCoerce, children)
+    | Pexp_send (e, l) ->
+      let children =
+        [
+          mk_expression e;
+          {kind = Ident; range = loc_to_range l.loc; children = []};
+        ]
+      in
+      (ExprSend, children)
     | Pexp_new _ | Pexp_setinstvar _ | Pexp_override _ | Pexp_poly _ ->
       (* unused nodes, to be removed *)
       (Expr, [])
