@@ -64,7 +64,7 @@ type nodeKind =
   (* a["b"] *)
   | ExprSend
   (* {"x": 3} *)
-  | ExprLetModule
+  | ExprExtension
   (* | Blah(x) => () *)
   | Case
   (* type x = { y: int } *)
@@ -78,6 +78,12 @@ type nodeKind =
   | LabelDeclaration
   (* int *)
   | Type
+  (* module X = { ... }*)
+  | ModuleBinding
+  (* something inside a module *)
+  | ModuleExpr
+  (* module X : <type> with *)
+  | ModuleType
 
 let kind_to_string = function
   | Structure -> "structure"
@@ -106,6 +112,7 @@ let kind_to_string = function
   | ExprConstraint -> "expression_constraint"
   | ExprCoerce -> "expression_coerce"
   | ExprSend -> "expression_send"
+  | ExprExtension -> "expression_extension"
   | Case -> "case"
   | TypeRecord -> "type_record"
   | TypeVariant -> "type_variant"
@@ -113,10 +120,16 @@ let kind_to_string = function
   | TypeOpen -> "type_open"
   | LabelDeclaration -> "label_declaration"
   | Type -> "type"
+  | ModuleBinding -> "module_binding"
+  | ModuleExpr -> "module_expression"
+  | ModuleType -> "module_type"
 
 type range = {startLine: int; startOffset: int; endLine: int; endOffset: int}
 
 type node = {kind: nodeKind; range: range; children: node list}
+
+let sort_nodes =
+  List.sort (fun a b -> Int.compare a.range.startOffset b.range.startOffset)
 
 (*
 
@@ -146,6 +159,9 @@ let combine_range (start : range) (endRange : range) : range =
 
 let mk_pattern (pat : pattern) : node =
   {kind = Pattern; range = loc_to_range pat.ppat_loc; children = []}
+
+let mk_string (v : string Location.loc) : node =
+  {kind = Ident; range = loc_to_range v.loc; children = []}
 
 let mk_long_ident (lid : Longident.t Location.loc) : node =
   {kind = Ident; range = loc_to_range lid.loc; children = []}
@@ -200,14 +216,10 @@ let rec mk_expression (expr : expression) : node =
       let bindingNodes = List.map mk_value_binding bindings in
       let children = bindingNodes @ [mk_expression expr] in
       (ExprLet, children)
-    | Pexp_apply (expr, args) ->
+    | Pexp_apply {funct = expr; args; partial = _} ->
       let exprNode = mk_expression expr in
       let argNodes = List.map (snd >> mk_expression) args in
-      let children =
-        exprNode :: argNodes
-        |> List.sort (fun a b ->
-               Int.compare a.range.startOffset b.range.startOffset)
-      in
+      let children = exprNode :: argNodes |> sort_nodes in
       (ExprApply, children)
     | Pexp_match (mex, cases) ->
       let children = mk_expression mex :: List.map mk_case cases in
@@ -263,17 +275,45 @@ let rec mk_expression (expr : expression) : node =
       let children = [mk_expression e; mk_core_type ct] in
       (ExprCoerce, children)
     | Pexp_send (e, l) ->
-      let children =
-        [
-          mk_expression e;
-          {kind = Ident; range = loc_to_range l.loc; children = []};
-        ]
-      in
+      let children = [mk_expression e; mk_string l] in
       (ExprSend, children)
-    | Pexp_new _ | Pexp_setinstvar _ | Pexp_override _ | Pexp_poly _ ->
-      (* unused nodes, to be removed *)
+    | Pexp_extension (ident, payload) ->
+      (ExprExtension, mk_string ident :: mk_payload payload)
+    | _ ->
+      let msg =
+        match expr.pexp_desc with
+        | Pexp_ident _ -> "Pexp_ident"
+        | Pexp_constant _ -> "Pexp_constant"
+        | Pexp_let _ -> "Pexp_let"
+        | Pexp_fun _ -> "Pexp_fun"
+        | Pexp_apply _ -> "Pexp_apply"
+        | Pexp_match _ -> "Pexp_match"
+        | Pexp_try _ -> "Pexp_try"
+        | Pexp_tuple _ -> "Pexp_tuple"
+        | Pexp_construct _ -> "Pexp_construct"
+        | Pexp_variant _ -> "Pexp_variant"
+        | Pexp_record _ -> "Pexp_record"
+        | Pexp_field _ -> "Pexp_field"
+        | Pexp_setfield _ -> "Pexp_setfield"
+        | Pexp_array _ -> "Pexp_array"
+        | Pexp_ifthenelse _ -> "Pexp_ifthenelse"
+        | Pexp_sequence _ -> "Pexp_sequence"
+        | Pexp_while _ -> "Pexp_while"
+        | Pexp_for _ -> "Pexp_for"
+        | Pexp_constraint _ -> "Pexp_constraint"
+        | Pexp_coerce _ -> "Pexp_coerce"
+        | Pexp_send _ -> "Pexp_send"
+        | Pexp_letmodule _ -> "Pexp_letmodule"
+        | Pexp_letexception _ -> "Pexp_letexception"
+        | Pexp_assert _ -> "Pexp_assert"
+        | Pexp_lazy _ -> "Pexp_lazy"
+        | Pexp_newtype _ -> "Pexp_newtype"
+        | Pexp_pack _ -> "Pexp_pack"
+        | Pexp_open _ -> "Pexp_open"
+        | Pexp_extension _ -> "Pexp_extension"
+      in
+      Printf.printf "got: %s\n" msg;
       (Expr, [])
-    | _ -> (Expr, [])
   in
   {kind; range = loc_to_range expr.pexp_loc; children}
 
@@ -296,31 +336,22 @@ and mk_case (case : case) : node =
   in
   {kind = Case; range = combine_range patNode.range bodyNode.range; children}
 
-let mk_label_declaration (ld : label_declaration) : node =
-  let name =
-    {kind = Ident; range = loc_to_range ld.pld_name.loc; children = []}
-  in
+and mk_payload (payload : payload) : node list =
+  match payload with
+  | PStr strs -> List.map mk_structure_item strs
+  | _ -> []
 
-  let typeNode = mk_core_type ld.pld_type in
+and mk_structure_item (tree : structure_item) : node =
+  let range = loc_to_range tree.pstr_loc in
+  let children = mk_structure_item_descr tree.pstr_desc in
+  {kind = Structure; range; children}
 
-  {
-    kind = LabelDeclaration;
-    range = loc_to_range ld.pld_loc;
-    children = [name; typeNode];
-  }
-
-let mk_type_declaration (td : type_declaration) : node =
-  match td.ptype_kind with
-  | Ptype_record fields ->
-    let children = List.map mk_label_declaration fields in
-    {kind = TypeRecord; range = loc_to_range td.ptype_loc; children}
-  | _ -> failwith "unsupported type_kind"
-
-let mk_structure_item_descr (desc : structure_item_desc) : node list =
+and mk_structure_item_descr (desc : structure_item_desc) : node list =
   match desc with
   | Pstr_eval (e, _) -> [mk_expression e]
   | Pstr_value (rec_flag, bindings) -> bindings |> List.map mk_value_binding
   | Pstr_type (_rec, typeDefns) -> List.map mk_type_declaration typeDefns
+  | Pstr_module mb -> [mk_module_binding mb]
   | _ -> []
 (* | Pstr_primitive _ -> _
    | Pstr_type (_, _ -> _
@@ -336,10 +367,103 @@ let mk_structure_item_descr (desc : structure_item_desc) : node list =
    | Pstr_attribute _ -> _
    | Pstr_extension (_, _ -> _ *)
 
-let mk_node (tree : structure_item) : node =
-  let range = loc_to_range tree.pstr_loc in
-  let children = mk_structure_item_descr tree.pstr_desc in
-  {kind = Structure; range; children}
+and mk_type_declaration (td : type_declaration) : node =
+  let attr_nodes = mk_attributes td.ptype_attributes in
+  let param_nodes = List.map (fst >> mk_core_type) td.ptype_params in
+  let constraint_nodes =
+    td.ptype_cstrs
+    |> List.concat_map (fun (ct1, ct2, _) ->
+           [mk_core_type ct1; mk_core_type ct2])
+  in
+  let kind, kind_nodes =
+    match td.ptype_kind with
+    | Ptype_abstract -> (TypeAbstract, [])
+    | Ptype_record fields ->
+      let children = List.map mk_label_declaration fields in
+      (TypeRecord, children)
+    | Ptype_variant _ -> failwith "Ptype_variant"
+    | Ptype_open -> (TypeOpen, [])
+  in
+  let manifest_nodes =
+    td.ptype_manifest |> Option.to_list |> List.map mk_core_type
+  in
+  let children =
+    attr_nodes @ param_nodes @ constraint_nodes @ kind_nodes @ manifest_nodes
+    |> sort_nodes
+  in
+  {kind; range = loc_to_range td.ptype_loc; children}
+
+and mk_label_declaration (ld : label_declaration) : node =
+  let name = mk_string ld.pld_name in
+
+  let typeNode = mk_core_type ld.pld_type in
+
+  {
+    kind = LabelDeclaration;
+    range = loc_to_range ld.pld_loc;
+    children = [name; typeNode];
+  }
+
+and mk_module_binding (mb : module_binding) : node =
+  let children =
+    mk_string mb.pmb_name :: mk_module_expr mb.pmb_expr
+    :: mk_attributes mb.pmb_attributes
+    |> sort_nodes
+  in
+  {kind = ModuleBinding; range = loc_to_range mb.pmb_loc; children}
+
+and mk_module_expr (me : module_expr) : node =
+  {
+    kind = ModuleExpr;
+    range = loc_to_range me.pmod_loc;
+    children =
+      mk_module_expression_desc me.pmod_desc @ mk_attributes me.pmod_attributes
+      |> sort_nodes;
+  }
+
+and mk_module_expression_desc (med : module_expr_desc) : node list =
+  match med with
+  | Pmod_ident lid -> [mk_long_ident lid]
+  | Pmod_structure str -> List.map mk_structure_item str
+  | Pmod_functor _ -> failwith "unsupported Pmod_functor"
+  | Pmod_apply (m1, m2) -> [mk_module_expr m1; mk_module_expr m2]
+  | Pmod_constraint (me, mt) -> [mk_module_expr me; mk_module_type mt]
+  | Pmod_unpack e -> [mk_expression e]
+  | Pmod_extension e -> mk_extension e
+
+and mk_extension ((ident, payload) : extension) : node list =
+  mk_string ident :: mk_payload payload
+
+and mk_module_type (mt : module_type) : node =
+  {
+    kind = ModuleType;
+    range = loc_to_range mt.pmty_loc;
+    children =
+      mk_attributes mt.pmty_attributes @ mk_module_type_desc mt.pmty_desc
+      |> sort_nodes;
+  }
+
+and mk_module_type_desc (mtd : module_type_desc) : node list =
+  match mtd with
+  | Pmty_ident lid -> [mk_long_ident lid]
+  | Pmty_signature signature -> failwith "Pmty_signature"
+  | Pmty_functor (ident, mtOpt, mt) ->
+    let s = mk_string ident in
+    let m1 = mtOpt |> Option.to_list |> List.map mk_module_type in
+    let m2 = mk_module_type mt in
+    [s; m2] @ m1 |> sort_nodes
+  | Pmty_with (mt, wc) ->
+    mk_module_type mt :: List.concat_map mk_with_constraint wc
+  | Pmty_typeof me -> [mk_module_expr me]
+  | Pmty_extension extension -> mk_extension extension
+  | Pmty_alias lid -> [mk_long_ident lid]
+
+and mk_with_constraint (wc : with_constraint) : node list =
+  match wc with
+  | Pwith_type (lid, td) | Pwith_typesubst (lid, td) ->
+    [mk_long_ident lid; mk_type_declaration td]
+  | Pwith_module (lid1, lid2) | Pwith_modsubst (lid1, lid2) ->
+    [mk_long_ident lid1; mk_long_ident lid2]
 
 let range_to_json (range : range) : string =
   Printf.sprintf
@@ -363,5 +487,5 @@ let split (filename : string) =
   in
   print_endline
     (result.parsetree
-    |> List.map (mk_node >> node_to_json)
+    |> List.map (mk_structure_item >> node_to_json)
     |> String.concat ", " |> Format.sprintf "[ %s ]")
