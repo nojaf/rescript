@@ -69,6 +69,16 @@ type nodeKind =
   | ExprLetModule
   (* exception inside a function *)
   | ExprLetException
+  (* assert true *)
+  | ExprAssert
+  (* lazy (4) *)
+  | ExprLazy
+  (* let a = (type t) => () *)
+  | ExprNewType
+  (* not sure what this is *)
+  | ExprPack
+  (* open JS *)
+  | ExprOpen
   (* | Blah(x) => () *)
   | Case
   (* type x = { y: int } *)
@@ -123,6 +133,11 @@ let kind_to_string = function
   | ExprExtension -> "expression_extension"
   | ExprLetModule -> "expression_let_module"
   | ExprLetException -> "expression_let_exception"
+  | ExprAssert -> "expression_assert"
+  | ExprLazy -> "expression_lazy"
+  | ExprNewType -> "expression_new_type"
+  | ExprPack -> "expression_pack"
+  | ExprOpen -> "expression_open"
   | Case -> "case"
   | TypeRecord -> "type_record"
   | TypeVariant -> "type_variant"
@@ -149,6 +164,9 @@ let sort_nodes =
    dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200
 
    ./cli/bsc -dparsetree A.res -only-parse
+   
+   alias j="dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200"
+   alias a="./cli/bsc -dparsetree A.res -only-parse"
 *)
 
 let ( >> ) f g x = g (f x)
@@ -298,11 +316,12 @@ let rec mk_expression (expr : expression) : node =
     | Pexp_letexception (ec, e) ->
       let children = [mk_extension_constructor ec; mk_expression e] in
       (ExprLetException, children)
-    | Pexp_assert _ -> failwith "Pexp_assert"
-    | Pexp_lazy _ -> failwith "Pexp_lazy"
-    | Pexp_newtype _ -> failwith "Pexp_newtype"
-    | Pexp_pack _ -> failwith "Pexp_pack"
-    | Pexp_open _ -> failwith "Pexp_open"
+    | Pexp_assert e -> (ExprAssert, [mk_expression e])
+    | Pexp_lazy e -> (ExprLazy, [mk_expression e])
+    | Pexp_newtype (ident, e) ->
+      (ExprNewType, [mk_string ident; mk_expression e])
+    | Pexp_pack me -> (ExprPack, [mk_module_expr me])
+    | Pexp_open (_, lid, e) -> (ExprOpen, [mk_long_ident lid; mk_expression e])
   in
   {kind; range = loc_to_range expr.pexp_loc; children}
 
