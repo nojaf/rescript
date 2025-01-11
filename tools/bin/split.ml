@@ -4,7 +4,7 @@ open Parsetree
 
 type nodeKind =
   (* Top level thing *)
-  | Structure
+  | StructureItem
   (* Binding *)
   | ValueBinding
   (* Identifier, may or may not have dots *)
@@ -65,6 +65,10 @@ type nodeKind =
   | ExprSend
   (* {"x": 3} *)
   | ExprExtension
+  (* module inside a function *)
+  | ExprLetModule
+  (* exception inside a function *)
+  | ExprLetException
   (* | Blah(x) => () *)
   | Case
   (* type x = { y: int } *)
@@ -84,9 +88,13 @@ type nodeKind =
   | ModuleExpr
   (* module X : <type> with *)
   | ModuleType
+  | ModuleTypeDeclaration
+  (* exception BadArgument({myMessage: string}) *)
+  | ExtensionConstructor
+  | SignatureItem
 
 let kind_to_string = function
-  | Structure -> "structure"
+  | StructureItem -> "structure_item"
   | ValueBinding -> "value_binding"
   | Ident -> "ident"
   | Pattern -> "pattern"
@@ -113,6 +121,8 @@ let kind_to_string = function
   | ExprCoerce -> "expression_coerce"
   | ExprSend -> "expression_send"
   | ExprExtension -> "expression_extension"
+  | ExprLetModule -> "expression_let_module"
+  | ExprLetException -> "expression_let_exception"
   | Case -> "case"
   | TypeRecord -> "type_record"
   | TypeVariant -> "type_variant"
@@ -123,6 +133,9 @@ let kind_to_string = function
   | ModuleBinding -> "module_binding"
   | ModuleExpr -> "module_expression"
   | ModuleType -> "module_type"
+  | ModuleTypeDeclaration -> "module_type_declaration"
+  | ExtensionConstructor -> "extension_constructor"
+  | SignatureItem -> "signature_item"
 
 type range = {startLine: int; startOffset: int; endLine: int; endOffset: int}
 
@@ -279,41 +292,17 @@ let rec mk_expression (expr : expression) : node =
       (ExprSend, children)
     | Pexp_extension (ident, payload) ->
       (ExprExtension, mk_string ident :: mk_payload payload)
-    | _ ->
-      let msg =
-        match expr.pexp_desc with
-        | Pexp_ident _ -> "Pexp_ident"
-        | Pexp_constant _ -> "Pexp_constant"
-        | Pexp_let _ -> "Pexp_let"
-        | Pexp_fun _ -> "Pexp_fun"
-        | Pexp_apply _ -> "Pexp_apply"
-        | Pexp_match _ -> "Pexp_match"
-        | Pexp_try _ -> "Pexp_try"
-        | Pexp_tuple _ -> "Pexp_tuple"
-        | Pexp_construct _ -> "Pexp_construct"
-        | Pexp_variant _ -> "Pexp_variant"
-        | Pexp_record _ -> "Pexp_record"
-        | Pexp_field _ -> "Pexp_field"
-        | Pexp_setfield _ -> "Pexp_setfield"
-        | Pexp_array _ -> "Pexp_array"
-        | Pexp_ifthenelse _ -> "Pexp_ifthenelse"
-        | Pexp_sequence _ -> "Pexp_sequence"
-        | Pexp_while _ -> "Pexp_while"
-        | Pexp_for _ -> "Pexp_for"
-        | Pexp_constraint _ -> "Pexp_constraint"
-        | Pexp_coerce _ -> "Pexp_coerce"
-        | Pexp_send _ -> "Pexp_send"
-        | Pexp_letmodule _ -> "Pexp_letmodule"
-        | Pexp_letexception _ -> "Pexp_letexception"
-        | Pexp_assert _ -> "Pexp_assert"
-        | Pexp_lazy _ -> "Pexp_lazy"
-        | Pexp_newtype _ -> "Pexp_newtype"
-        | Pexp_pack _ -> "Pexp_pack"
-        | Pexp_open _ -> "Pexp_open"
-        | Pexp_extension _ -> "Pexp_extension"
-      in
-      Printf.printf "got: %s\n" msg;
-      (Expr, [])
+    | Pexp_letmodule (ident, me, e) ->
+      let children = [mk_string ident; mk_module_expr me; mk_expression e] in
+      (ExprLetModule, children)
+    | Pexp_letexception (ec, e) ->
+      let children = [mk_extension_constructor ec; mk_expression e] in
+      (ExprLetException, children)
+    | Pexp_assert _ -> failwith "Pexp_assert"
+    | Pexp_lazy _ -> failwith "Pexp_lazy"
+    | Pexp_newtype _ -> failwith "Pexp_newtype"
+    | Pexp_pack _ -> failwith "Pexp_pack"
+    | Pexp_open _ -> failwith "Pexp_open"
   in
   {kind; range = loc_to_range expr.pexp_loc; children}
 
@@ -341,31 +330,27 @@ and mk_payload (payload : payload) : node list =
   | PStr strs -> List.map mk_structure_item strs
   | _ -> []
 
-and mk_structure_item (tree : structure_item) : node =
-  let range = loc_to_range tree.pstr_loc in
-  let children = mk_structure_item_descr tree.pstr_desc in
-  {kind = Structure; range; children}
-
-and mk_structure_item_descr (desc : structure_item_desc) : node list =
-  match desc with
-  | Pstr_eval (e, _) -> [mk_expression e]
-  | Pstr_value (rec_flag, bindings) -> bindings |> List.map mk_value_binding
-  | Pstr_type (_rec, typeDefns) -> List.map mk_type_declaration typeDefns
-  | Pstr_module mb -> [mk_module_binding mb]
-  | _ -> []
-(* | Pstr_primitive _ -> _
-   | Pstr_type (_, _ -> _
-   | Pstr_typext _ -> _
-   | Pstr_exception _ -> _
-   | Pstr_module _ -> _
-   | Pstr_recmodule _ -> _
-   | Pstr_modtype _ -> _
-   | Pstr_open _ -> _
-   | Pstr_class _ -> _
-   | Pstr_class_type _ -> _
-   | Pstr_include _ -> _
-   | Pstr_attribute _ -> _
-   | Pstr_extension (_, _ -> _ *)
+and mk_structure_item (si : structure_item) : node =
+  let range = loc_to_range si.pstr_loc in
+  let children =
+    match si.pstr_desc with
+    | Pstr_eval (e, _) -> [mk_expression e]
+    | Pstr_value (rec_flag, bindings) -> bindings |> List.map mk_value_binding
+    | Pstr_type (_rec, typeDefns) -> List.map mk_type_declaration typeDefns
+    | Pstr_module mb -> [mk_module_binding mb]
+    | Pstr_primitive _ -> failwith "Pstr_primitive"
+    | Pstr_typext _ -> failwith "Pstr_typext"
+    | Pstr_exception _ -> failwith "Pstr_exception"
+    | Pstr_recmodule _ -> failwith "Pstr_recmodule"
+    | Pstr_modtype mtd -> [mk_module_type_declaration mtd]
+    | Pstr_open _ -> failwith "Pstr_open"
+    | Pstr_class _ -> failwith "Pstr_class"
+    | Pstr_class_type _ -> failwith "Pstr_class_type"
+    | Pstr_include _ -> failwith "Pstr_include"
+    | Pstr_attribute _ -> failwith "Pstr_attribute"
+    | Pstr_extension _ -> failwith "Pstr_extension"
+  in
+  {kind = StructureItem; range; children}
 
 and mk_type_declaration (td : type_declaration) : node =
   let attr_nodes = mk_attributes td.ptype_attributes in
@@ -446,7 +431,7 @@ and mk_module_type (mt : module_type) : node =
 and mk_module_type_desc (mtd : module_type_desc) : node list =
   match mtd with
   | Pmty_ident lid -> [mk_long_ident lid]
-  | Pmty_signature signature -> failwith "Pmty_signature"
+  | Pmty_signature signature -> List.map mk_signature_item signature
   | Pmty_functor (ident, mtOpt, mt) ->
     let s = mk_string ident in
     let m1 = mtOpt |> Option.to_list |> List.map mk_module_type in
@@ -464,6 +449,55 @@ and mk_with_constraint (wc : with_constraint) : node list =
     [mk_long_ident lid; mk_type_declaration td]
   | Pwith_module (lid1, lid2) | Pwith_modsubst (lid1, lid2) ->
     [mk_long_ident lid1; mk_long_ident lid2]
+
+and mk_extension_constructor (ec : extension_constructor) : node =
+  let name = mk_string ec.pext_name in
+  let attributes = mk_attributes ec.pext_attributes in
+  let kind =
+    match ec.pext_kind with
+    | Pext_decl (ca, cto) ->
+      let ca_nodes = mk_constructor_arguments ca in
+      let cto_nodes = cto |> Option.to_list |> List.map mk_core_type in
+      ca_nodes @ cto_nodes |> sort_nodes
+    | Pext_rebind lid -> [mk_long_ident lid]
+  in
+  let children = (name :: attributes) @ kind |> sort_nodes in
+  {kind = ExtensionConstructor; range = loc_to_range ec.pext_loc; children}
+
+and mk_constructor_arguments (ca : constructor_arguments) : node list =
+  match ca with
+  | Pcstr_tuple cts -> cts |> List.map mk_core_type
+  | Pcstr_record fields -> fields |> List.map mk_label_declaration
+
+and mk_module_type_declaration (mtd : module_type_declaration) : node =
+  let children =
+    match mtd.pmtd_type with
+    | None -> mk_string mtd.pmtd_name :: mk_attributes mtd.pmtd_attributes
+    | Some mt ->
+      mk_string mtd.pmtd_name :: mk_module_type mt
+      :: mk_attributes mtd.pmtd_attributes
+      |> sort_nodes
+  in
+  {kind = ModuleTypeDeclaration; range = loc_to_range mtd.pmtd_loc; children}
+
+and mk_signature_item (si : signature_item) : node =
+  let children =
+    match si.psig_desc with
+    | Psig_value _ -> failwith "Psig_value"
+    | Psig_type _ -> failwith "Psig_typ"
+    | Psig_typext _ -> failwith "Psig_typext"
+    | Psig_exception _ -> failwith "Psig_exception"
+    | Psig_module _ -> failwith "Psig_module"
+    | Psig_recmodule _ -> failwith "Psig_recmodule"
+    | Psig_modtype _ -> failwith "Psig_modtype"
+    | Psig_open _ -> failwith "Psig_open"
+    | Psig_include _ -> failwith "Psig_include"
+    | Psig_class _ -> failwith "Psig_class"
+    | Psig_class_type _ -> failwith "Psig_class_type"
+    | Psig_attribute _ -> failwith "Psig_attribute"
+    | Psig_extension _ -> failwith "Psig_extension"
+  in
+  {kind = SignatureItem; range = loc_to_range si.psig_loc; children}
 
 let range_to_json (range : range) : string =
   Printf.sprintf
