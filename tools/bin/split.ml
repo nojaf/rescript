@@ -91,6 +91,8 @@ type nodeKind =
   (* type a *)
   | TypeAbstract
   | TypeOpen
+  (* type Foo.Bar.t += Foo *)
+  | TypeExtension
   (* y: int (record field) *)
   | LabelDeclaration
   (* int *)
@@ -110,7 +112,13 @@ type nodeKind =
   | ValueDescription
   (* used to describe a variant case in type definition *)
   | ConstructorDeclaration
+  (* include Node.Impl({  *)
+  | IncludeDeclaration
   | SignatureItem
+  (* module M7: { module N': { let x: int } } = (M6: { module N: ... } *)
+  | ModuleDeclaration
+  (* include *)
+  | IncludeDescription
 
 let kind_to_string = function
   | StructureItem -> "structure_item"
@@ -154,6 +162,7 @@ let kind_to_string = function
   | TypeVariant -> "type_variant"
   | TypeAbstract -> "type_abstract"
   | TypeOpen -> "type_open"
+  | TypeExtension -> "type_extension"
   | LabelDeclaration -> "label_declaration"
   | Type -> "type"
   | ModuleBinding -> "module_binding"
@@ -164,7 +173,10 @@ let kind_to_string = function
   | Primitive -> "primitive"
   | ValueDescription -> "value_description"
   | ConstructorDeclaration -> "constructor_declaration"
+  | IncludeDeclaration -> "include_declaration"
   | SignatureItem -> "signature_item"
+  | ModuleDeclaration -> "module_declaration"
+  | IncludeDescription -> "include_description"
 
 type range = {startLine: int; startOffset: int; endLine: int; endOffset: int}
 
@@ -203,6 +215,14 @@ let combine_range (start : range) (endRange : range) : range =
     endLine = endRange.endLine;
     endOffset = endRange.endOffset;
   }
+
+let combine_all_range fallback_range (nodes : node list) : range =
+  match sort_nodes nodes with
+  | [] -> fallback_range
+  | head :: tail ->
+    List.fold_right
+      (fun (n : node) (acc : range) -> combine_range acc n.range)
+      tail head.range
 
 let mk_pattern (pat : pattern) : node =
   {kind = Pattern; range = loc_to_range pat.ppat_loc; children = []}
@@ -346,14 +366,7 @@ and mk_attributes ats : node list =
   |> List.map (fun (indent, payload) ->
          let indent = mk_string indent in
          let payload = mk_payload payload |> sort_nodes in
-         let payload_range : range =
-           match payload with
-           | [] -> indent.range
-           | head :: tail ->
-             List.fold_right
-               (fun (n : node) (acc : range) -> combine_range acc n.range)
-               tail head.range
-         in
+         let payload_range : range = combine_all_range indent.range payload in
          let range = combine_range indent.range payload_range in
          {kind = Attribute; range; children = indent :: payload})
 
@@ -377,7 +390,12 @@ and mk_case (case : case) : node =
 and mk_payload (payload : payload) : node list =
   match payload with
   | PStr strs -> List.map mk_structure_item strs
-  | _ -> []
+  | PSig signature -> List.map mk_signature_item signature
+  | PTyp ct -> [mk_core_type ct]
+  | PPat (pat, eo) -> (
+    match eo with
+    | None -> [mk_pattern pat]
+    | Some e -> [mk_pattern pat; mk_expression e])
 
 and mk_structure_item (si : structure_item) : node =
   let range = loc_to_range si.pstr_loc in
@@ -388,15 +406,15 @@ and mk_structure_item (si : structure_item) : node =
     | Pstr_type (_rec, typeDefns) -> List.map mk_type_declaration typeDefns
     | Pstr_module mb -> [mk_module_binding mb]
     | Pstr_primitive vd -> [mk_value_description vd]
-    | Pstr_typext _ -> failwith "Pstr_typext"
-    | Pstr_exception _ -> failwith "Pstr_exception"
-    | Pstr_recmodule _ -> failwith "Pstr_recmodule"
+    | Pstr_typext te -> [mk_type_extension te]
+    | Pstr_exception ec -> [mk_extension_constructor ec]
+    | Pstr_recmodule mbs -> List.map mk_module_binding mbs
     | Pstr_modtype mtd -> [mk_module_type_declaration mtd]
     | Pstr_open od -> [mk_open_description od]
     | Pstr_class _ -> failwith "Pstr_class"
     | Pstr_class_type _ -> failwith "Pstr_class_type"
-    | Pstr_include _ -> failwith "Pstr_include"
-    | Pstr_attribute _ -> failwith "Pstr_attribute"
+    | Pstr_include id -> [mk_include_infos_module_expr id]
+    | Pstr_attribute a -> mk_attributes [a]
     | Pstr_extension (ext, attrs) ->
       mk_extension ext @ mk_attributes attrs |> sort_nodes
   in
@@ -460,7 +478,11 @@ and mk_module_expression_desc (med : module_expr_desc) : node list =
   match med with
   | Pmod_ident lid -> [mk_long_ident lid]
   | Pmod_structure str -> List.map mk_structure_item str
-  | Pmod_functor _ -> failwith "unsupported Pmod_functor"
+  | Pmod_functor (ident, mto, me) ->
+    let name = mk_string ident in
+    let mto = Option.to_list mto |> List.map mk_module_type in
+    let me = mk_module_expr me in
+    name :: me :: mto |> sort_nodes
   | Pmod_apply (m1, m2) -> [mk_module_expr m1; mk_module_expr m2]
   | Pmod_constraint (me, mt) -> [mk_module_expr me; mk_module_type mt]
   | Pmod_unpack e -> [mk_expression e]
@@ -555,24 +577,55 @@ and mk_constructor_declaration (cd : constructor_declaration) : node =
   let children = [name; args; res; attrs] |> List.concat |> sort_nodes in
   {kind = ConstructorDeclaration; range = loc_to_range cd.pcd_loc; children}
 
+and mk_include_infos_module_type (infos : module_type include_infos) : node =
+  let children =
+    mk_module_type infos.pincl_mod :: mk_attributes infos.pincl_attributes
+    |> sort_nodes
+  in
+  {kind = IncludeDescription; range = loc_to_range infos.pincl_loc; children}
+
+and mk_include_infos_module_expr (infos : module_expr include_infos) : node =
+  let children =
+    mk_module_expr infos.pincl_mod :: mk_attributes infos.pincl_attributes
+    |> sort_nodes
+  in
+  {kind = IncludeDeclaration; range = loc_to_range infos.pincl_loc; children}
+
+and mk_type_extension (te : type_extension) : node =
+  let path = mk_long_ident te.ptyext_path in
+  let params = List.map (fst >> mk_core_type) te.ptyext_params in
+  let ctor = List.map mk_extension_constructor te.ptyext_constructors in
+  let attrs = mk_attributes te.ptyext_attributes in
+  let children = [[path]; params; ctor; attrs] |> List.flatten |> sort_nodes in
+  let range = combine_all_range path.range children in
+  {kind = TypeExtension; range; children}
+
 and mk_signature_item (si : signature_item) : node =
   let children =
     match si.psig_desc with
-    | Psig_value _ -> failwith "Psig_value"
-    | Psig_type _ -> failwith "Psig_typ"
-    | Psig_typext _ -> failwith "Psig_typext"
-    | Psig_exception _ -> failwith "Psig_exception"
-    | Psig_module _ -> failwith "Psig_module"
-    | Psig_recmodule _ -> failwith "Psig_recmodule"
-    | Psig_modtype _ -> failwith "Psig_modtype"
+    | Psig_value vd -> [mk_value_description vd]
+    | Psig_type (_rec, tds) -> List.map mk_type_declaration tds
+    | Psig_typext te -> [mk_type_extension te]
+    | Psig_exception ec -> [mk_extension_constructor ec]
+    | Psig_module md -> [mk_module_declaration md]
+    | Psig_recmodule mds -> List.map mk_module_declaration mds
+    | Psig_modtype mtd -> [mk_module_type_declaration mtd]
     | Psig_open od -> [mk_open_description od]
-    | Psig_include _ -> failwith "Psig_include"
+    | Psig_include id -> [mk_include_infos_module_type id]
     | Psig_class _ -> failwith "Psig_class"
     | Psig_class_type _ -> failwith "Psig_class_type"
-    | Psig_attribute _ -> failwith "Psig_attribute"
-    | Psig_extension _ -> failwith "Psig_extension"
+    | Psig_attribute a -> mk_attributes [a]
+    | Psig_extension (e, ats) ->
+      mk_extension e @ mk_attributes ats |> sort_nodes
   in
   {kind = SignatureItem; range = loc_to_range si.psig_loc; children}
+
+and mk_module_declaration (md : module_declaration) : node =
+  let name = mk_string md.pmd_name in
+  let t = mk_module_type md.pmd_type in
+  let ats = mk_attributes md.pmd_attributes in
+  let children = name :: t :: ats |> sort_nodes in
+  {kind = ModuleDeclaration; range = loc_to_range md.pmd_loc; children}
 
 let range_to_json (range : range) : string =
   Printf.sprintf
