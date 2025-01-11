@@ -9,6 +9,9 @@ type nodeKind =
   | ValueBinding
   (* Identifier, may or may not have dots *)
   | Ident
+  | Open
+  (* @foo *)
+  | Attribute
   | Pattern
   | Expr
   (* (a) => b *)
@@ -75,7 +78,7 @@ type nodeKind =
   | ExprLazy
   (* let a = (type t) => () *)
   | ExprNewType
-  (* not sure what this is *)
+  (* let x = (module (JS)); *)
   | ExprPack
   (* open JS *)
   | ExprOpen
@@ -101,12 +104,20 @@ type nodeKind =
   | ModuleTypeDeclaration
   (* exception BadArgument({myMessage: string}) *)
   | ExtensionConstructor
+  (* external x *)
+  | Primitive
+  (* external <x> *)
+  | ValueDescription
+  (* used to describe a variant case in type definition *)
+  | ConstructorDeclaration
   | SignatureItem
 
 let kind_to_string = function
   | StructureItem -> "structure_item"
   | ValueBinding -> "value_binding"
   | Ident -> "ident"
+  | Open -> "open"
+  | Attribute -> "attribute"
   | Pattern -> "pattern"
   | Expr -> "expr"
   | ExprFun -> "expression_function"
@@ -150,6 +161,9 @@ let kind_to_string = function
   | ModuleType -> "module_type"
   | ModuleTypeDeclaration -> "module_type_declaration"
   | ExtensionConstructor -> "extension_constructor"
+  | Primitive -> "primitive"
+  | ValueDescription -> "value_description"
+  | ConstructorDeclaration -> "constructor_declaration"
   | SignatureItem -> "signature_item"
 
 type range = {startLine: int; startOffset: int; endLine: int; endOffset: int}
@@ -167,6 +181,8 @@ let sort_nodes =
    
    alias j="dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200"
    alias a="./cli/bsc -dparsetree A.res -only-parse"
+
+
 *)
 
 let ( >> ) f g x = g (f x)
@@ -325,7 +341,21 @@ let rec mk_expression (expr : expression) : node =
   in
   {kind; range = loc_to_range expr.pexp_loc; children}
 
-and mk_attributes _ : node list = []
+and mk_attributes ats : node list =
+  ats
+  |> List.map (fun (indent, payload) ->
+         let indent = mk_string indent in
+         let payload = mk_payload payload |> sort_nodes in
+         let payload_range : range =
+           match payload with
+           | [] -> indent.range
+           | head :: tail ->
+             List.fold_right
+               (fun (n : node) (acc : range) -> combine_range acc n.range)
+               tail head.range
+         in
+         let range = combine_range indent.range payload_range in
+         {kind = Attribute; range; children = indent :: payload})
 
 and mk_value_binding (binding : value_binding) : node =
   let children =
@@ -357,17 +387,18 @@ and mk_structure_item (si : structure_item) : node =
     | Pstr_value (rec_flag, bindings) -> bindings |> List.map mk_value_binding
     | Pstr_type (_rec, typeDefns) -> List.map mk_type_declaration typeDefns
     | Pstr_module mb -> [mk_module_binding mb]
-    | Pstr_primitive _ -> failwith "Pstr_primitive"
+    | Pstr_primitive vd -> [mk_value_description vd]
     | Pstr_typext _ -> failwith "Pstr_typext"
     | Pstr_exception _ -> failwith "Pstr_exception"
     | Pstr_recmodule _ -> failwith "Pstr_recmodule"
     | Pstr_modtype mtd -> [mk_module_type_declaration mtd]
-    | Pstr_open _ -> failwith "Pstr_open"
+    | Pstr_open od -> [mk_open_description od]
     | Pstr_class _ -> failwith "Pstr_class"
     | Pstr_class_type _ -> failwith "Pstr_class_type"
     | Pstr_include _ -> failwith "Pstr_include"
     | Pstr_attribute _ -> failwith "Pstr_attribute"
-    | Pstr_extension _ -> failwith "Pstr_extension"
+    | Pstr_extension (ext, attrs) ->
+      mk_extension ext @ mk_attributes attrs |> sort_nodes
   in
   {kind = StructureItem; range; children}
 
@@ -385,7 +416,7 @@ and mk_type_declaration (td : type_declaration) : node =
     | Ptype_record fields ->
       let children = List.map mk_label_declaration fields in
       (TypeRecord, children)
-    | Ptype_variant _ -> failwith "Ptype_variant"
+    | Ptype_variant cds -> (TypeVariant, List.map mk_constructor_declaration cds)
     | Ptype_open -> (TypeOpen, [])
   in
   let manifest_nodes =
@@ -499,6 +530,31 @@ and mk_module_type_declaration (mtd : module_type_declaration) : node =
   in
   {kind = ModuleTypeDeclaration; range = loc_to_range mtd.pmtd_loc; children}
 
+and mk_open_description (od : open_description) : node =
+  {
+    kind = Open;
+    range = loc_to_range od.popen_loc;
+    children =
+      mk_long_ident od.popen_lid :: mk_attributes od.popen_attributes
+      |> sort_nodes;
+  }
+
+and mk_value_description (vd : value_description) : node =
+  let children =
+    [mk_string vd.pval_name; mk_core_type vd.pval_type]
+    @ mk_attributes vd.pval_attributes
+    |> sort_nodes
+  in
+  {kind = ValueDescription; range = loc_to_range vd.pval_loc; children}
+
+and mk_constructor_declaration (cd : constructor_declaration) : node =
+  let name = [mk_string cd.pcd_name] in
+  let args = mk_constructor_arguments cd.pcd_args in
+  let res = Option.to_list cd.pcd_res |> List.map mk_core_type in
+  let attrs = mk_attributes cd.pcd_attributes in
+  let children = [name; args; res; attrs] |> List.concat |> sort_nodes in
+  {kind = ConstructorDeclaration; range = loc_to_range cd.pcd_loc; children}
+
 and mk_signature_item (si : signature_item) : node =
   let children =
     match si.psig_desc with
@@ -509,7 +565,7 @@ and mk_signature_item (si : signature_item) : node =
     | Psig_module _ -> failwith "Psig_module"
     | Psig_recmodule _ -> failwith "Psig_recmodule"
     | Psig_modtype _ -> failwith "Psig_modtype"
-    | Psig_open _ -> failwith "Psig_open"
+    | Psig_open od -> [mk_open_description od]
     | Psig_include _ -> failwith "Psig_include"
     | Psig_class _ -> failwith "Psig_class"
     | Psig_class_type _ -> failwith "Psig_class_type"
