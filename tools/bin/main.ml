@@ -32,6 +32,7 @@ let version = Version.version
 let main () =
   match Sys.argv |> Array.to_list |> List.tl with
   | "split" :: [path] -> Split.split path
+  | "spliti" :: [path] -> Split.spliti path
   | "doc" :: rest -> (
     match rest with
     | ["-h"] | ["--help"] -> logAndExit (Ok docHelp)
