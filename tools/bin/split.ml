@@ -411,8 +411,6 @@ and mk_structure_item (si : structure_item) : node =
     | Pstr_recmodule mbs -> List.map mk_module_binding mbs
     | Pstr_modtype mtd -> [mk_module_type_declaration mtd]
     | Pstr_open od -> [mk_open_description od]
-    | Pstr_class _ -> failwith "Pstr_class"
-    | Pstr_class_type _ -> failwith "Pstr_class_type"
     | Pstr_include id -> [mk_include_infos_module_expr id]
     | Pstr_attribute a -> mk_attributes [a]
     | Pstr_extension (ext, attrs) ->
@@ -612,8 +610,6 @@ and mk_signature_item (si : signature_item) : node =
     | Psig_modtype mtd -> [mk_module_type_declaration mtd]
     | Psig_open od -> [mk_open_description od]
     | Psig_include id -> [mk_include_infos_module_type id]
-    | Psig_class _ -> failwith "Psig_class"
-    | Psig_class_type _ -> failwith "Psig_class_type"
     | Psig_attribute a -> mk_attributes [a]
     | Psig_extension (e, ats) ->
       mk_extension e @ mk_attributes ats |> sort_nodes
