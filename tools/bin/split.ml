@@ -13,7 +13,6 @@ type nodeKind =
   (* @foo *)
   | Attribute
   | Pattern
-  | Expr
   (* (a) => b *)
   | ExprFun
   (* [] *)
@@ -106,8 +105,6 @@ type nodeKind =
   | ModuleTypeDeclaration
   (* exception BadArgument({myMessage: string}) *)
   | ExtensionConstructor
-  (* external x *)
-  | Primitive
   (* external <x> *)
   | ValueDescription
   (* used to describe a variant case in type definition *)
@@ -127,7 +124,6 @@ let kind_to_string = function
   | Open -> "open"
   | Attribute -> "attribute"
   | Pattern -> "pattern"
-  | Expr -> "expr"
   | ExprFun -> "expression_function"
   | ExprArray -> "expression_array"
   | ExprIdent -> "expression_ident"
@@ -170,7 +166,6 @@ let kind_to_string = function
   | ModuleType -> "module_type"
   | ModuleTypeDeclaration -> "module_type_declaration"
   | ExtensionConstructor -> "extension_constructor"
-  | Primitive -> "primitive"
   | ValueDescription -> "value_description"
   | ConstructorDeclaration -> "constructor_declaration"
   | IncludeDeclaration -> "include_declaration"
@@ -637,13 +632,25 @@ let rec node_to_json node =
   Printf.sprintf "{ \"kind\": \"%s\", \"range\": %s, \"children\": %s }"
     (kind_to_string node.kind) (range_to_json node.range) children
 
+let print_json_nodes (nodes : string list) : unit =
+  print_endline (nodes |> String.concat ", " |> Format.sprintf "[ %s ]")
+
 let split (filename : string) =
   let source = Res_io.read_file ~filename in
   let result =
     Res_driver.parse_implementation_from_source ~for_printer:false
       ~display_filename:filename ~source
   in
-  print_endline
-    (result.parsetree
-    |> List.map (mk_structure_item >> node_to_json)
-    |> String.concat ", " |> Format.sprintf "[ %s ]")
+  result.parsetree
+  |> List.map (mk_structure_item >> node_to_json)
+  |> print_json_nodes
+
+let spliti (filename : string) =
+  let source = Res_io.read_file ~filename in
+  let result =
+    Res_driver.parse_interface_from_source ~for_printer:false
+      ~display_filename:filename ~source
+  in
+  result.parsetree
+  |> List.map (mk_signature_item >> node_to_json)
+  |> print_json_nodes
