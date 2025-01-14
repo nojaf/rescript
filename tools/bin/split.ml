@@ -635,8 +635,7 @@ let rec node_to_json node =
 let print_json_nodes (nodes : string list) : unit =
   print_endline (nodes |> String.concat ", " |> Format.sprintf "[ %s ]")
 
-let split (filename : string) =
-  let source = Res_io.read_file ~filename in
+let split (filename : string) (source : string) =
   let result =
     Res_driver.parse_implementation_from_source ~for_printer:false
       ~display_filename:filename ~source
@@ -645,8 +644,7 @@ let split (filename : string) =
   |> List.map (mk_structure_item >> node_to_json)
   |> print_json_nodes
 
-let spliti (filename : string) =
-  let source = Res_io.read_file ~filename in
+let spliti (filename : string) (source : string) =
   let result =
     Res_driver.parse_interface_from_source ~for_printer:false
       ~display_filename:filename ~source
