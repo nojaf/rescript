@@ -1,2 +1,2 @@
-val split : string -> unit
-val spliti : string -> unit
+val split : string -> string -> unit
+val spliti : string -> string -> unit

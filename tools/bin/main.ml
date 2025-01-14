@@ -28,11 +28,30 @@ let logAndExit = function
     exit 1
 
 let version = Version.version
+let read_all_stdin () =
+  let buffer = Buffer.create 4096 in
+  try
+    while true do
+      let line = input_line stdin in
+      Buffer.add_string buffer (line ^ "\n")
+    done;
+    Buffer.contents buffer
+  with End_of_file -> Buffer.contents buffer
 
 let main () =
   match Sys.argv |> Array.to_list |> List.tl with
-  | "split" :: [path] -> Split.split path
-  | "spliti" :: [path] -> Split.spliti path
+  | ["split"] ->
+    let source = read_all_stdin () in
+    Split.split "Tmp.res" source
+  | "split" :: [path] ->
+    let source = read_all_stdin () in
+    Split.split path source
+  | ["spliti"] ->
+    let source = really_input_string stdin (in_channel_length stdin) in
+    Split.spliti "Tmp.resi" source
+  | "spliti" :: [path] ->
+    let source = Res_io.read_file ~filename:path in
+    Split.spliti path source
   | "doc" :: rest -> (
     match rest with
     | ["-h"] | ["--help"] -> logAndExit (Ok docHelp)
