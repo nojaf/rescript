@@ -44,10 +44,10 @@ let main () =
     let source = read_all_stdin () in
     Split.split "Tmp.res" source
   | "split" :: [path] ->
-    let source = read_all_stdin () in
+    let source = Res_io.read_file ~filename:path in
     Split.split path source
   | ["spliti"] ->
-    let source = really_input_string stdin (in_channel_length stdin) in
+    let source = read_all_stdin () in
     Split.spliti "Tmp.resi" source
   | "spliti" :: [path] ->
     let source = Res_io.read_file ~filename:path in
