@@ -177,8 +177,12 @@ type range = {startLine: int; startOffset: int; endLine: int; endOffset: int}
 
 type node = {kind: nodeKind; range: range; children: node list}
 
-let sort_nodes =
-  List.sort (fun a b -> Int.compare a.range.startOffset b.range.startOffset)
+let sort_nodes nodes =
+  nodes
+  (* Some nodes can be artificial like how JSX is represented *)
+  |> List.filter (fun node ->
+         node.range.startOffset <> -1 && node.range.endOffset <> -1)
+  |> List.sort (fun a b -> Int.compare a.range.startOffset b.range.startOffset)
 
 (*
 
@@ -339,8 +343,7 @@ let rec mk_expression (expr : expression) : node =
     | Pexp_send (e, l) ->
       let children = [mk_expression e; mk_string l] in
       (ExprSend, children)
-    | Pexp_extension (ident, payload) ->
-      (ExprExtension, mk_string ident :: mk_payload payload)
+    | Pexp_extension (ident, payload) -> (ExprExtension, mk_payload payload)
     | Pexp_letmodule (ident, me, e) ->
       let children = [mk_string ident; mk_module_expr me; mk_expression e] in
       (ExprLetModule, children)
