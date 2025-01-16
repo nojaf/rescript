@@ -173,7 +173,14 @@ let kind_to_string = function
   | ModuleDeclaration -> "module_declaration"
   | IncludeDescription -> "include_description"
 
-type range = {startLine: int; startOffset: int; endLine: int; endOffset: int}
+type range = {
+  startLine: int;
+  startColumn: int;
+  startOffset: int;
+  endLine: int;
+  endColumn: int;
+  endOffset: int;
+}
 
 type node = {kind: nodeKind; range: range; children: node list}
 
@@ -202,16 +209,20 @@ let id x = x
 let loc_to_range (loc : Location.t) =
   {
     startLine = loc.loc_start.pos_lnum;
+    startColumn = loc.loc_start.pos_cnum - loc.loc_start.pos_bol;
     startOffset = loc.loc_start.pos_cnum;
     endLine = loc.loc_end.pos_lnum;
+    endColumn = loc.loc_end.pos_cnum - loc.loc_end.pos_bol;
     endOffset = loc.loc_end.pos_cnum;
   }
 
 let combine_range (start : range) (endRange : range) : range =
   {
     startLine = start.startLine;
+    startColumn = start.startColumn;
     startOffset = start.startOffset;
     endLine = endRange.endLine;
+    endColumn = endRange.endColumn;
     endOffset = endRange.endOffset;
   }
 
@@ -623,9 +634,10 @@ and mk_module_declaration (md : module_declaration) : node =
 
 let range_to_json (range : range) : string =
   Printf.sprintf
-    "{ \"startLine\": %d, \"startOffset\": %d, \"endLine\": %d, \"endOffset\": \
-     %d }"
-    range.startLine range.startOffset range.endLine range.endOffset
+    "{ \"startLine\": %d, \"startColumn\": %d, \"startOffset\": %d, \
+     \"endLine\": %d, \"endColumn\": %d, \"endOffset\": %d }"
+    range.startLine range.startColumn range.startOffset range.endLine
+    range.endColumn range.endOffset
 
 let rec node_to_json node =
   let children =
