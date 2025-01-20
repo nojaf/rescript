@@ -234,6 +234,15 @@ let combine_all_range fallback_range (nodes : node list) : range =
       (fun (n : node) (acc : range) -> combine_range acc n.range)
       tail head.range
 
+let range_contains (outer : range) (inner : range) : bool =
+  outer.startLine <= inner.startLine
+  && outer.endLine >= inner.endLine
+  && outer.startOffset <= inner.startOffset
+  && outer.endOffset >= inner.endOffset
+  && (outer.startLine < inner.startLine
+     || outer.startColumn <= inner.startColumn)
+  && (outer.endLine > inner.endLine || outer.endColumn >= inner.endColumn)
+
 let mk_pattern (pat : pattern) : node =
   {kind = Pattern; range = loc_to_range pat.ppat_loc; children = []}
 
@@ -243,11 +252,8 @@ let mk_string (v : string Location.loc) : node =
 let mk_long_ident (lid : Longident.t Location.loc) : node =
   {kind = Ident; range = loc_to_range lid.loc; children = []}
 
-(* Should core_type_desc be split up? Less common I think. *)
-let mk_core_type (ct : core_type) : node =
-  {kind = Type; range = loc_to_range ct.ptyp_loc; children = []}
-
 let rec mk_expression (expr : expression) : node =
+  let range = loc_to_range expr.pexp_loc in
   let kind, children =
     match expr.pexp_desc with
     | Pexp_fun funExpr ->
@@ -286,7 +292,10 @@ let rec mk_expression (expr : expression) : node =
       let children =
         match exprOpt with
         | None -> [identNode]
-        | Some expr -> [identNode; mk_expression expr]
+        | Some expr ->
+          let exprNode = mk_expression expr in
+          if identNode.range = exprNode.range then [exprNode]
+          else [identNode; exprNode]
       in
       (ExprConstruct, children)
     | Pexp_let (_, bindings, expr) ->
@@ -305,7 +314,12 @@ let rec mk_expression (expr : expression) : node =
       let children = mk_expression tex :: List.map mk_case cases in
       (ExprTry, children)
     | Pexp_tuple xs ->
-      let children = List.map mk_expression xs in
+      let children =
+        List.map mk_expression xs
+        (* I noticed that in JSX there could be some child node that is larger than its parent. *)
+        (* My educated guess would be that these nodes are duplicated for performance reasons *)
+        |> List.filter (fun child -> range_contains range child.range)
+      in
       (ExprTuple, children)
     | Pexp_variant (_, eOpt) ->
       let children = eOpt |> Option.to_list |> List.map mk_expression in
@@ -368,7 +382,10 @@ let rec mk_expression (expr : expression) : node =
     | Pexp_pack me -> (ExprPack, [mk_module_expr me])
     | Pexp_open (_, lid, e) -> (ExprOpen, [mk_long_ident lid; mk_expression e])
   in
-  {kind; range = loc_to_range expr.pexp_loc; children}
+  let all_chilren =
+    children @ mk_attributes expr.pexp_attributes |> sort_nodes
+  in
+  {kind; range; children = all_chilren}
 
 and mk_attributes ats : node list =
   ats
@@ -378,6 +395,14 @@ and mk_attributes ats : node list =
          let payload_range : range = combine_all_range indent.range payload in
          let range = combine_range indent.range payload_range in
          {kind = Attribute; range; children = indent :: payload})
+
+and (* Should core_type_desc be split up? Less common I think. *)
+    mk_core_type (ct : core_type) : node =
+  {
+    kind = Type;
+    range = loc_to_range ct.ptyp_loc;
+    children = mk_attributes ct.ptyp_attributes;
+  }
 
 and mk_value_binding (binding : value_binding) : node =
   let children =
@@ -455,13 +480,13 @@ and mk_type_declaration (td : type_declaration) : node =
 
 and mk_label_declaration (ld : label_declaration) : node =
   let name = mk_string ld.pld_name in
-
   let typeNode = mk_core_type ld.pld_type in
+  let attributes = mk_attributes ld.pld_attributes in
 
   {
     kind = LabelDeclaration;
     range = loc_to_range ld.pld_loc;
-    children = [name; typeNode];
+    children = name :: typeNode :: attributes |> sort_nodes;
   }
 
 and mk_module_binding (mb : module_binding) : node =
@@ -652,7 +677,7 @@ let print_json_nodes (nodes : string list) : unit =
 
 let split (filename : string) (source : string) =
   let result =
-    Res_driver.parse_implementation_from_source ~for_printer:false
+    Res_driver.parse_implementation_from_source ~for_printer:true
       ~display_filename:filename ~source
   in
   result.parsetree
@@ -661,7 +686,7 @@ let split (filename : string) (source : string) =
 
 let spliti (filename : string) (source : string) =
   let result =
-    Res_driver.parse_interface_from_source ~for_printer:false
+    Res_driver.parse_interface_from_source ~for_printer:true
       ~display_filename:filename ~source
   in
   result.parsetree
