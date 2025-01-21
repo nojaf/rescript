@@ -1,5 +1,16 @@
 [@@@warning "-27"]
 
+(*
+
+   dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200
+
+   ./cli/bsc -dparsetree A.res -only-parse
+   
+   alias j="dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200"
+   alias a="./cli/bsc -dparsetree A.res -only-parse"
+
+*)
+
 open Parsetree
 
 type nodeKind =
@@ -191,18 +202,6 @@ let sort_nodes nodes =
          node.range.startOffset <> -1 && node.range.endOffset <> -1)
   |> List.sort (fun a b -> Int.compare a.range.startOffset b.range.startOffset)
 
-(*
-
-   dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200
-
-   ./cli/bsc -dparsetree A.res -only-parse
-   
-   alias j="dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200"
-   alias a="./cli/bsc -dparsetree A.res -only-parse"
-
-
-*)
-
 let ( >> ) f g x = g (f x)
 let id x = x
 
@@ -242,9 +241,6 @@ let range_contains (outer : range) (inner : range) : bool =
   && (outer.startLine < inner.startLine
      || outer.startColumn <= inner.startColumn)
   && (outer.endLine > inner.endLine || outer.endColumn >= inner.endColumn)
-
-let mk_pattern (pat : pattern) : node =
-  {kind = Pattern; range = loc_to_range pat.ppat_loc; children = []}
 
 let mk_string (v : string Location.loc) : node =
   {kind = Ident; range = loc_to_range v.loc; children = []}
@@ -396,13 +392,40 @@ and mk_attributes ats : node list =
          let range = combine_range indent.range payload_range in
          {kind = Attribute; range; children = indent :: payload})
 
-and (* Should core_type_desc be split up? Less common I think. *)
-    mk_core_type (ct : core_type) : node =
-  {
-    kind = Type;
-    range = loc_to_range ct.ptyp_loc;
-    children = mk_attributes ct.ptyp_attributes;
-  }
+and mk_core_type (ct : core_type) : node =
+  let children =
+    match ct.ptyp_desc with
+    | Ptyp_any | Ptyp_var _ -> []
+    | Ptyp_arrow (_, t1, t2, _) -> [mk_core_type t1; mk_core_type t2]
+    | Ptyp_tuple ts -> List.map mk_core_type ts
+    | Ptyp_constr (lid, ts) -> mk_long_ident lid :: List.map mk_core_type ts
+    | Ptyp_object (fields, _flag) -> List.concat_map mk_object_field fields
+    | Ptyp_alias (t, _) -> [mk_core_type t]
+    | Ptyp_variant (fields, _, _) -> List.concat_map mk_row_field fields
+    | Ptyp_poly (lids, t) -> mk_core_type t :: List.map mk_string lids
+    | Ptyp_package (lid, lids) ->
+      mk_long_ident lid
+      :: List.concat_map
+           (fun (lid, t) -> [mk_long_ident lid; mk_core_type t])
+           lids
+    | Ptyp_extension e -> mk_extension e
+  in
+
+  let children = children @ mk_attributes ct.ptyp_attributes |> sort_nodes in
+
+  {kind = Type; range = loc_to_range ct.ptyp_loc; children}
+
+and mk_object_field (field : object_field) : node list =
+  match field with
+  | Otag (ident, attributes, t) ->
+    mk_string ident :: mk_core_type t :: mk_attributes attributes
+  | Oinherit t -> [mk_core_type t]
+
+and mk_row_field (field : row_field) : node list =
+  match field with
+  | Rtag (ident, attributes, _, ts) ->
+    (mk_string ident :: mk_attributes attributes) @ List.map mk_core_type ts
+  | Rinherit t -> [mk_core_type t]
 
 and mk_value_binding (binding : value_binding) : node =
   let children =
@@ -631,6 +654,36 @@ and mk_type_extension (te : type_extension) : node =
   let children = [[path]; params; ctor; attrs] |> List.flatten |> sort_nodes in
   let range = combine_all_range path.range children in
   {kind = TypeExtension; range; children}
+
+and mk_pattern (pat : pattern) : node =
+  let children =
+    match pat.ppat_desc with
+    | Ppat_any -> []
+    | Ppat_var ident -> [mk_string ident]
+    | Ppat_alias (p, a) -> [mk_pattern p; mk_string a]
+    | Ppat_constant _ | Ppat_interval _ -> []
+    | Ppat_tuple ts -> List.map mk_pattern ts
+    | Ppat_construct (lid, patOpt) ->
+      mk_long_ident lid :: (patOpt |> Option.to_list |> List.map mk_pattern)
+    | Ppat_variant (_, patOpt) ->
+      patOpt |> Option.to_list |> List.map mk_pattern
+    | Ppat_record (fields, _) ->
+      fields
+      |> List.concat_map (fun (lid, p, _) -> [mk_long_ident lid; mk_pattern p])
+    | Ppat_array ps -> List.map mk_pattern ps
+    | Ppat_or (p1, p2) -> [mk_pattern p1; mk_pattern p2]
+    | Ppat_constraint (p, ct) -> [mk_pattern p; mk_core_type ct]
+    | Ppat_type lid -> [mk_long_ident lid]
+    | Ppat_lazy p -> [mk_pattern p]
+    | Ppat_unpack ident -> [mk_string ident]
+    | Ppat_exception p -> [mk_pattern p]
+    | Ppat_extension extension -> mk_extension extension
+    | Ppat_open (lid, p) -> [mk_long_ident lid; mk_pattern p]
+  in
+
+  let children = children @ mk_attributes pat.ppat_attributes |> sort_nodes in
+
+  {kind = Pattern; range = loc_to_range pat.ppat_loc; children}
 
 and mk_signature_item (si : signature_item) : node =
   let children =
