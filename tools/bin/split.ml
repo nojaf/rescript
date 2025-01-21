@@ -198,6 +198,9 @@ type range = {
 
 type node = {kind: nodeKind; range: range; children: node list}
 
+module StringSet = Set.Make (String)
+let ignored_attributes : StringSet.t = ["res.braces"] |> StringSet.of_list
+
 let sort_nodes nodes =
   nodes
   (* Some nodes can be artificial like how JSX is represented *)
@@ -252,7 +255,17 @@ let mk_long_ident (lid : Longident.t Location.loc) : node =
   {kind = Ident; range = loc_to_range lid.loc; children = []}
 
 let rec mk_expression (expr : expression) : node =
-  let range = loc_to_range expr.pexp_loc in
+  let range =
+    (* The expression might be wrapped in braces,
+       if this is the case it will be wrapped in a res.braces attribute.*)
+    let braces_attribute =
+      expr.pexp_attributes
+      |> List.find_opt (fun (ident, _) -> ident.Location.txt = "res.braces")
+    in
+    match braces_attribute with
+    | Some (loc, _) -> loc_to_range loc.loc
+    | None -> loc_to_range expr.pexp_loc
+  in
   let kind, children =
     match expr.pexp_desc with
     | Pexp_fun funExpr ->
@@ -388,15 +401,17 @@ let rec mk_expression (expr : expression) : node =
 
 and mk_attributes ats : node list =
   ats
-  |> List.map (fun (ident, payload) ->
-         let ident_node = mk_string ident in
-         let payload = mk_payload payload |> sort_nodes in
-         let payload_range : range =
-           combine_all_range ident_node.range payload
-         in
-         let range = combine_range ident_node.range payload_range in
-         let kind = if ident.txt = "res.doc" then DocComment else Attribute in
-         {kind; range; children = ident_node :: payload})
+  |> List.filter_map (fun (ident, payload) ->
+         if StringSet.mem ident.Location.txt ignored_attributes then None
+         else
+           let ident_node = mk_string ident in
+           let payload = mk_payload payload |> sort_nodes in
+           let payload_range : range =
+             combine_all_range ident_node.range payload
+           in
+           let range = combine_range ident_node.range payload_range in
+           let kind = if ident.txt = "res.doc" then DocComment else Attribute in
+           Some {kind; range; children = ident_node :: payload})
 
 and mk_core_type (ct : core_type) : node =
   let children =
@@ -437,6 +452,7 @@ and mk_value_binding (binding : value_binding) : node =
   let children =
     [mk_pattern binding.pvb_pat; mk_expression binding.pvb_expr]
     @ mk_attributes binding.pvb_attributes
+    |> sort_nodes
   in
   {range = loc_to_range binding.pvb_loc; kind = ValueBinding; children}
 
