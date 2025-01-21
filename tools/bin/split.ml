@@ -127,6 +127,8 @@ type nodeKind =
   | ModuleDeclaration
   (* include *)
   | IncludeDescription
+  (* /** foo */, found in attributes *)
+  | DocComment
 
 let kind_to_string = function
   | StructureItem -> "structure_item"
@@ -183,6 +185,7 @@ let kind_to_string = function
   | SignatureItem -> "signature_item"
   | ModuleDeclaration -> "module_declaration"
   | IncludeDescription -> "include_description"
+  | DocComment -> "doc_comment"
 
 type range = {
   startLine: int;
@@ -385,12 +388,15 @@ let rec mk_expression (expr : expression) : node =
 
 and mk_attributes ats : node list =
   ats
-  |> List.map (fun (indent, payload) ->
-         let indent = mk_string indent in
+  |> List.map (fun (ident, payload) ->
+         let ident_node = mk_string ident in
          let payload = mk_payload payload |> sort_nodes in
-         let payload_range : range = combine_all_range indent.range payload in
-         let range = combine_range indent.range payload_range in
-         {kind = Attribute; range; children = indent :: payload})
+         let payload_range : range =
+           combine_all_range ident_node.range payload
+         in
+         let range = combine_range ident_node.range payload_range in
+         let kind = if ident.txt = "res.doc" then DocComment else Attribute in
+         {kind; range; children = ident_node :: payload})
 
 and mk_core_type (ct : core_type) : node =
   let children =
