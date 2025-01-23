@@ -128,7 +128,10 @@ type nodeKind =
   (* include *)
   | IncludeDescription
   (* /** foo */, found in attributes *)
-  | DocComment
+  | CommentDoc
+  | CommentSingleLine
+  | CommentMultiLine
+  | CommentModule
 
 let kind_to_string = function
   | StructureItem -> "structure_item"
@@ -185,7 +188,10 @@ let kind_to_string = function
   | SignatureItem -> "signature_item"
   | ModuleDeclaration -> "module_declaration"
   | IncludeDescription -> "include_description"
-  | DocComment -> "doc_comment"
+  | CommentDoc -> "comment_doc"
+  | CommentSingleLine -> "comment_single_line"
+  | CommentMultiLine -> "comment_multiline"
+  | CommentModule -> "comment_module"
 
 type range = {
   startLine: int;
@@ -410,7 +416,7 @@ and mk_attributes ats : node list =
              combine_all_range ident_node.range payload
            in
            let range = combine_range ident_node.range payload_range in
-           let kind = if ident.txt = "res.doc" then DocComment else Attribute in
+           let kind = if ident.txt = "res.doc" then CommentDoc else Attribute in
            Some {kind; range; children = ident_node :: payload})
 
 and mk_core_type (ct : core_type) : node =
@@ -750,20 +756,40 @@ let rec node_to_json node =
 let print_json_nodes (nodes : string list) : unit =
   print_endline (nodes |> String.concat ", " |> Format.sprintf "[ %s ]")
 
+let mk_comments (comments : Res_comment.t list) : node list =
+  let open Res_comment in
+  comments
+  |> List.map (fun (comment : t) ->
+         let range = loc_to_range (loc comment) in
+         let kind, range =
+           (* leading slashes are not included in the range for some reason*)
+           if is_single_line_comment comment then
+             ( CommentSingleLine,
+               {
+                 range with
+                 startOffset = range.startOffset - 2;
+                 startColumn = range.startColumn - 2;
+               } )
+           else if is_doc_comment comment then (CommentDoc, range)
+           else if is_module_comment comment then (CommentModule, range)
+           else (CommentMultiLine, range)
+         in
+         {kind; children = []; range})
+
 let split (filename : string) (source : string) =
   let result =
     Res_driver.parse_implementation_from_source ~for_printer:true
       ~display_filename:filename ~source
   in
-  result.parsetree
-  |> List.map (mk_structure_item >> node_to_json)
-  |> print_json_nodes
+  let tree_nodes = List.map mk_structure_item result.parsetree in
+  let comment_nodes = mk_comments result.comments in
+  tree_nodes @ comment_nodes |> List.map node_to_json |> print_json_nodes
 
 let spliti (filename : string) (source : string) =
   let result =
     Res_driver.parse_interface_from_source ~for_printer:true
       ~display_filename:filename ~source
   in
-  result.parsetree
-  |> List.map (mk_signature_item >> node_to_json)
-  |> print_json_nodes
+  let tree_nodes = List.map mk_signature_item result.parsetree in
+  let comment_nodes = mk_comments result.comments in
+  tree_nodes @ comment_nodes |> List.map node_to_json |> print_json_nodes
