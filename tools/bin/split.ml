@@ -504,6 +504,7 @@ and mk_structure_item (si : structure_item) : node =
   {kind = StructureItem; range; children}
 
 and mk_type_declaration (td : type_declaration) : node =
+  let name_node = mk_string td.ptype_name in
   let attr_nodes = mk_attributes td.ptype_attributes in
   let param_nodes = List.map (fst >> mk_core_type) td.ptype_params in
   let constraint_nodes =
@@ -524,7 +525,8 @@ and mk_type_declaration (td : type_declaration) : node =
     td.ptype_manifest |> Option.to_list |> List.map mk_core_type
   in
   let children =
-    attr_nodes @ param_nodes @ constraint_nodes @ kind_nodes @ manifest_nodes
+    (name_node :: attr_nodes) @ param_nodes @ constraint_nodes @ kind_nodes
+    @ manifest_nodes
     |> sort_nodes
   in
   {kind; range = loc_to_range td.ptype_loc; children}
