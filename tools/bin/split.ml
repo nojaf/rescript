@@ -423,7 +423,8 @@ and mk_core_type (ct : core_type) : node =
   let children =
     match ct.ptyp_desc with
     | Ptyp_any | Ptyp_var _ -> []
-    | Ptyp_arrow (_, t1, t2, _) -> [mk_core_type t1; mk_core_type t2]
+    | Ptyp_arrow {lbl = _; arg = t1; ret = t2; arity = _} ->
+      [mk_core_type t1; mk_core_type t2]
     | Ptyp_tuple ts -> List.map mk_core_type ts
     | Ptyp_constr (lid, ts) -> mk_long_ident lid :: List.map mk_core_type ts
     | Ptyp_object (fields, _flag) -> List.concat_map mk_object_field fields
