@@ -7,7 +7,7 @@
    ./cli/bsc -dparsetree A.res -only-parse
    
    alias j="dune exec rescript-tools -- split A.res | bunx prettier --parser json --print-width 200"
-   alias a="./cli/bsc -dparsetree A.res -only-parse"
+   alias a="./cli/bsc -dparsetree -ignore-parse-errors A.res -only-parse"
 
 *)
 
