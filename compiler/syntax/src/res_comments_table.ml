@@ -1031,11 +1031,6 @@ and walk_expression expr t comments =
     attach t.leading typexpr.ptyp_loc leading;
     walk_core_type typexpr t inside;
     attach t.trailing typexpr.ptyp_loc trailing
-  | Pexp_jsx_fragment (opening_greater_than, exprs, _closing_lesser_than) -> 
-    let opening_token = {expr.pexp_loc with loc_end = opening_greater_than} in
-    let (on_same_line, rest) = partition_by_on_same_line opening_token comments in
-    attach t.trailing opening_token on_same_line;
-    let _ = (exprs |> List.map (fun e -> walk_expression e t rest)) in ()
   | Pexp_tuple []
   | Pexp_array []
   | Pexp_construct ({txt = Longident.Lident "[]"}, _) ->
@@ -1513,18 +1508,11 @@ and walk_expression expr t comments =
         attach t.leading return_expr.pexp_loc leading;
         walk_expression return_expr t inside;
         attach t.trailing return_expr.pexp_loc trailing)
-  | Pexp_jsx_fragment (opening_greater_than, exprs, closing_lesser_than) ->
+  | Pexp_jsx_fragment (opening_greater_than, exprs, _closing_lesser_than) ->
     let opening_token = {expr.pexp_loc with loc_end = opening_greater_than} in
-    (* leading comments should be attached to the entire node *)
-    let _leading, trailing =
-      partition_leading_trailing comments opening_token
-    in
-    attach t.trailing opening_token trailing;
-    walk_list (exprs |> List.map (fun e -> Expression e)) t comments;
-    let closing_token = {expr.pexp_loc with loc_start = closing_lesser_than} in
-    let leading, trailing = partition_leading_trailing comments closing_token in
-    attach t.leading closing_token leading;
-    attach t.trailing closing_token trailing
+    let on_same_line, rest = partition_by_on_same_line opening_token comments in
+    attach t.trailing opening_token on_same_line;
+    exprs |> List.iter (fun e -> walk_expression e t rest)
   | Pexp_send _ -> ()
 
 and walk_expr_parameter (_attrs, _argLbl, expr_opt, pattern) t comments =
