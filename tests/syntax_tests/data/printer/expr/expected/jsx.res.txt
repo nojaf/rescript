@@ -315,9 +315,7 @@ let x = <MyComponent sidebar={<div> test </div>} nav={<Navbar />} />
 module App = {
   @react.component
   let make = () => {
-    <>
-      1
-    </>
+    <> 1 </>
   }
 }
 
@@ -437,10 +435,7 @@ let x = <C> ...{() => msg->React.string} </C>
 
 let x = <C> ...{array->Array.map(React.string)} </C>
 
-let x =
-  <>
-    {array->Array.map(React.string)}
-  </>
+let x = <> {array->Array.map(React.string)} </>
 
 let x = {
   let _ = <div />
@@ -453,10 +448,7 @@ let x = {
 }
 
 let x = {
-  let _ =
-    <>
-      {children}
-    </>
+  let _ = <> {children} </>
   msg->React.string
 }
 

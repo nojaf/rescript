@@ -4419,7 +4419,7 @@ and print_jsx_fragment ~state (opening_greater_than : Lexing.position)
   in
   let line_sep =
     if
-      List.length children > 0
+      List.length children > 1
       || List.exists ParsetreeViewer.is_jsx_expression children
     then Doc.hard_line
     else Doc.line
