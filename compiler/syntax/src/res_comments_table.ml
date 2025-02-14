@@ -1031,6 +1031,11 @@ and walk_expression expr t comments =
     attach t.leading typexpr.ptyp_loc leading;
     walk_core_type typexpr t inside;
     attach t.trailing typexpr.ptyp_loc trailing
+  | Pexp_jsx_fragment (opening_greater_than, exprs, _closing_lesser_than) -> 
+    let opening_token = {expr.pexp_loc with loc_end = opening_greater_than} in
+    let (on_same_line, rest) = partition_by_on_same_line opening_token comments in
+    attach t.trailing opening_token on_same_line;
+    let _ = (exprs |> List.map (fun e -> walk_expression e t rest)) in ()
   | Pexp_tuple []
   | Pexp_array []
   | Pexp_construct ({txt = Longident.Lident "[]"}, _) ->
