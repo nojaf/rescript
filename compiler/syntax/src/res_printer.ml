@@ -4424,6 +4424,7 @@ and print_jsx_fragment ~state (opening_greater_than : Lexing.position)
     then Doc.hard_line
     else Doc.line
   in
+  let _ = print_int (List.length children) in
   Doc.group
     (Doc.concat
        [

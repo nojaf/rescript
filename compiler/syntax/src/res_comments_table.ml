@@ -24,6 +24,9 @@ let copy tbl =
 
 let empty = make ()
 
+let print_comments (xs: Comment.t list) =  
+  List.map (fun x -> print_endline (Comment.to_string x)) xs
+
 let print_entries tbl =
   let open Location in
   Hashtbl.fold
@@ -1511,6 +1514,7 @@ and walk_expression expr t comments =
   | Pexp_jsx_fragment (opening_greater_than, exprs, _closing_lesser_than) ->
     let opening_token = {expr.pexp_loc with loc_end = opening_greater_than} in
     let on_same_line, rest = partition_by_on_same_line opening_token comments in
+    let _ = print_comments rest in
     attach t.trailing opening_token on_same_line;
     exprs |> List.iter (fun e -> walk_expression e t rest)
   | Pexp_send _ -> ()
