@@ -3413,6 +3413,7 @@ and print_expression ~state (e : Parsetree.expression) cmt_tbl =
     | Pexp_ifthenelse _ ->
       true
     | Pexp_match _ when ParsetreeViewer.is_if_let_expr e -> true
+    | Pexp_jsx_fragment _ -> true
     | Pexp_construct _ when ParsetreeViewer.has_jsx_attribute e.pexp_attributes
       ->
       true
@@ -4424,7 +4425,6 @@ and print_jsx_fragment ~state (opening_greater_than : Lexing.position)
     then Doc.hard_line
     else Doc.line
   in
-  let _ = print_int (List.length children) in
   Doc.group
     (Doc.concat
        [
@@ -4438,11 +4438,7 @@ and print_jsx_fragment ~state (opening_greater_than : Lexing.position)
                   Doc.line;
                   Doc.join ~sep:line_sep
                     (List.map
-                       (fun e ->
-                         let doc =
-                           print_jsx_child ~spread:false ~state e ~cmt_tbl
-                         in
-                         print_comments doc cmt_tbl e.pexp_loc)
+                       (fun e -> print_jsx_child ~spread:false ~state e ~cmt_tbl)
                        children);
                 ]));
          line_sep;
@@ -4506,6 +4502,9 @@ and print_jsx_child ?(spread = true) ~state
   let leading_line_comment_present =
     has_leading_line_comment cmt_tbl children_expr.pexp_loc
   in
+  let _ = CommentTable.log cmt_tbl in
+  let _ = CommentTable.log_loc children_expr.pexp_loc in
+  let _ = print_endline (string_of_bool leading_line_comment_present) in
   let expr_doc = print_expression_with_comments ~state children_expr cmt_tbl in
   Doc.concat
     [
