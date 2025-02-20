@@ -4514,7 +4514,26 @@ and print_jsx_children ~state (children_expr : Parsetree.expression) ~sep
     in
     let docs = loop children_expr [] children in
     Doc.group (Doc.join ~sep docs)
-  | _ -> print_jsx_child ~state children_expr cmt_tbl
+  | _ ->
+    let leading_line_comment_present =
+      has_leading_line_comment cmt_tbl children_expr.pexp_loc
+    in
+    let expr_doc =
+      print_expression_with_comments ~state children_expr cmt_tbl
+    in
+    Doc.concat
+      [
+        Doc.dotdotdot;
+        (match Parens.jsx_child_expr children_expr with
+        | Parenthesized | Braced _ ->
+          let inner_doc =
+            if Parens.braced_expr children_expr then add_parens expr_doc
+            else expr_doc
+          in
+          if leading_line_comment_present then add_braces inner_doc
+          else Doc.concat [Doc.lbrace; inner_doc; Doc.rbrace]
+        | Nothing -> expr_doc);
+      ]
 
 and print_jsx_props ~state args cmt_tbl : Doc.t * Parsetree.expression option =
   (* This function was introduced because we have different formatting behavior for self-closing tags and other tags
