@@ -4438,12 +4438,31 @@ and print_jsx_fragment ~state (opening_greater_than : Lexing.position)
                   Doc.line;
                   Doc.join ~sep:line_sep
                     (List.map
-                       (fun e -> print_jsx_child ~spread:false ~state e ~cmt_tbl)
+                       (fun e -> print_jsx_child ~state e cmt_tbl)
                        children);
                 ]));
          line_sep;
          closing;
        ])
+
+and print_jsx_child ~state (expr : Parsetree.expression) cmt_tbl =
+  let leading_line_comment_present =
+    has_leading_line_comment cmt_tbl expr.pexp_loc
+  in
+  let expr_doc = print_expression_with_comments ~state expr cmt_tbl in
+  let add_parens_or_braces expr_doc =
+    (* {(20: int)} make sure that we also protect the expression inside *)
+    let inner_doc =
+      if Parens.braced_expr expr then add_parens expr_doc else expr_doc
+    in
+    if leading_line_comment_present then add_braces inner_doc
+    else Doc.concat [Doc.lbrace; inner_doc; Doc.rbrace]
+  in
+  match Parens.jsx_child_expr expr with
+  | Nothing -> expr_doc
+  | Parenthesized -> add_parens_or_braces expr_doc
+  | Braced braces_loc ->
+    print_comments (add_parens_or_braces expr_doc) cmt_tbl braces_loc
 
 and print_jsx_children ~state (children_expr : Parsetree.expression) ~sep
     cmt_tbl =
@@ -4495,30 +4514,7 @@ and print_jsx_children ~state (children_expr : Parsetree.expression) ~sep
     in
     let docs = loop children_expr [] children in
     Doc.group (Doc.join ~sep docs)
-  | _ -> print_jsx_child ~state children_expr ~cmt_tbl
-
-and print_jsx_child ?(spread = true) ~state
-    (children_expr : Parsetree.expression) ~cmt_tbl =
-  let leading_line_comment_present =
-    has_leading_line_comment cmt_tbl children_expr.pexp_loc
-  in
-  let _ = CommentTable.log cmt_tbl in
-  let _ = CommentTable.log_loc children_expr.pexp_loc in
-  let _ = print_endline (string_of_bool leading_line_comment_present) in
-  let expr_doc = print_expression_with_comments ~state children_expr cmt_tbl in
-  Doc.concat
-    [
-      (if spread then Doc.dotdotdot else Doc.nil);
-      (match Parens.jsx_child_expr children_expr with
-      | Parenthesized | Braced _ ->
-        let inner_doc =
-          if Parens.braced_expr children_expr then add_parens expr_doc
-          else expr_doc
-        in
-        if leading_line_comment_present then add_braces inner_doc
-        else Doc.concat [Doc.lbrace; inner_doc; Doc.rbrace]
-      | Nothing -> expr_doc);
-    ]
+  | _ -> print_jsx_child ~state children_expr cmt_tbl
 
 and print_jsx_props ~state args cmt_tbl : Doc.t * Parsetree.expression option =
   (* This function was introduced because we have different formatting behavior for self-closing tags and other tags

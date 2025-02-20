@@ -24,25 +24,24 @@ let copy tbl =
 
 let empty = make ()
 
-let print_comments (xs: Comment.t list) =  
+let print_comments (xs : Comment.t list) =
   List.map (fun x -> print_endline (Comment.to_string x)) xs
 
-let print_locx (k: Warnings.loc) =
-        Doc.concat
-          [
-            Doc.lbracket;
-            Doc.text (string_of_int k.loc_start.pos_lnum);
-            Doc.text ":";
-            Doc.text
-              (string_of_int (k.loc_start.pos_cnum - k.loc_start.pos_bol));
-            Doc.text "-";
-            Doc.text (string_of_int k.loc_end.pos_lnum);
-            Doc.text ":";
-            Doc.text (string_of_int (k.loc_end.pos_cnum - k.loc_end.pos_bol));
-            Doc.rbracket;
-          ]
+let print_locx (k : Warnings.loc) =
+  Doc.concat
+    [
+      Doc.lbracket;
+      Doc.text (string_of_int k.loc_start.pos_lnum);
+      Doc.text ":";
+      Doc.text (string_of_int (k.loc_start.pos_cnum - k.loc_start.pos_bol));
+      Doc.text "-";
+      Doc.text (string_of_int k.loc_end.pos_lnum);
+      Doc.text ":";
+      Doc.text (string_of_int (k.loc_end.pos_cnum - k.loc_end.pos_bol));
+      Doc.rbracket;
+    ]
 
-let log_loc k = (print_locx k) |> Doc.to_string ~width:80 |> print_endline
+let log_loc k = print_locx k |> Doc.to_string ~width:80 |> print_endline
 
 let print_entries tbl =
   Hashtbl.fold
@@ -1517,7 +1516,7 @@ and walk_expression expr t comments =
     let opening_token = {expr.pexp_loc with loc_end = opening_greater_than} in
     let on_same_line, rest = partition_by_on_same_line opening_token comments in
     attach t.trailing opening_token on_same_line;
-    let xs = exprs |> List.map (fun e -> Expression e) in 
+    let xs = exprs |> List.map (fun e -> Expression e) in
     walk_list xs t rest
   | Pexp_send _ -> ()
 
