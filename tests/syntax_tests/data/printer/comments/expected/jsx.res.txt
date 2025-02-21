@@ -67,16 +67,8 @@ module Cite = {
 
 let x =
   <>
-    {
-      // before a
-      a // after a
-      // before b
-      // after b
-    }
-    {
-      // before a
-      // after a
-      // before b
-      b // after b
-    }
+    // before a
+    {a} // after a
+    // before b
+    {b} // after b
   </>
