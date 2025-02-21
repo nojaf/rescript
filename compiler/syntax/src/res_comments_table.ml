@@ -24,10 +24,7 @@ let copy tbl =
 
 let empty = make ()
 
-let print_comments (xs : Comment.t list) =
-  List.map (fun x -> print_endline (Comment.to_string x)) xs
-
-let print_locx (k : Warnings.loc) =
+let print_loc (k : Warnings.loc) =
   Doc.concat
     [
       Doc.lbracket;
@@ -41,12 +38,10 @@ let print_locx (k : Warnings.loc) =
       Doc.rbracket;
     ]
 
-let log_loc k = print_locx k |> Doc.to_string ~width:80 |> print_endline
-
 let print_entries tbl =
   Hashtbl.fold
     (fun (k : Location.t) (v : Comment.t list) acc ->
-      let loc = print_locx k in
+      let loc = print_loc k in
       let doc =
         Doc.breakable_group ~force_break:true
           (Doc.concat
