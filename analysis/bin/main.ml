@@ -208,6 +208,9 @@ let main () =
       (Json.escape (CreateInterface.command ~path ~cmiFile))
   | [_; "format"; path] ->
     Printf.printf "\"%s\"" (Json.escape (Commands.format ~path))
+  | [_; "selectionRange"; path; line; col] ->
+    SelectionRange.selectionRange ~path ~line:(int_of_string line)
+      ~col:(int_of_string col)
   | [_; "test"; path] -> Commands.test ~path
   | args when List.mem "-h" args || List.mem "--help" args -> prerr_endline help
   | _ ->
