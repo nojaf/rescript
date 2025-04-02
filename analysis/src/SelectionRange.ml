@@ -4,6 +4,10 @@ open Location
 
 type selectionRange = {range: Protocol.range; parent: selectionRange option}
 
+type ast =
+  | Implementation of Parsetree.structure
+  | Interface of Parsetree.signature
+
 module SeenLocationSet = Set.Make (struct
   type t = Warnings.loc
 
@@ -27,9 +31,10 @@ module SeenLocationSet = Set.Make (struct
         else compare a.loc_end.pos_cnum b.loc_end.pos_cnum
 end)
 
-let process_implementation (offset : int list)
-    (implementation : Parsetree.structure) : selectionRange list =
-  offset
+let empty_array = "[]"
+
+let process_ast (offsets : int list) (ast : ast) : selectionRange list =
+  offsets
   |> List.filter_map (fun offset ->
          let locations = ref SeenLocationSet.empty in
 
@@ -43,7 +48,13 @@ let process_implementation (offset : int list)
                locations := SeenLocationSet.add loc !locations
          in
          let iterator = {Ast_iterator.default_iterator with location} in
-         implementation |> List.iter (iterator.structure_item iterator);
+         let _ =
+           match ast with
+           | Implementation implementation ->
+             implementation |> List.iter (iterator.structure_item iterator)
+           | Interface signature ->
+             signature |> List.iter (iterator.signature_item iterator)
+         in
 
          !locations |> SeenLocationSet.elements
          |> List.iter (fun loc ->
@@ -88,12 +99,12 @@ let selectionRange ~(path : string) ~(line : int) ~(col : int) =
   let result =
     let textOpt = Files.readFile path in
     match textOpt with
-    | None | Some "" -> Protocol.null
+    | None | Some "" -> empty_array
     | Some text -> (
       match Pos.positionToOffset text (line, col) with
       | None ->
         print_endline "No offset found";
-        Protocol.null
+        empty_array
       | Some offset ->
         print_endline ("offset: " ^ string_of_int offset);
         if Filename.check_suffix path ".res" then
@@ -101,15 +112,17 @@ let selectionRange ~(path : string) ~(line : int) ~(col : int) =
             Res_driver.parsing_engine.parse_implementation ~for_printer:false
           in
           let {Res_driver.parsetree = implementation} = parser ~filename:path in
-          process_implementation [offset] implementation
+          process_ast [offset] (Implementation implementation)
           |> List.map serialize_selection_range
           |> Protocol.array
         else if Filename.check_suffix path ".resi" then
           let parser =
             Res_driver.parsing_engine.parse_interface ~for_printer:false
           in
-          let {Res_driver.parsetree = _signature} = parser ~filename:path in
-          Protocol.null
-        else Protocol.null)
+          let {Res_driver.parsetree = signature} = parser ~filename:path in
+          process_ast [offset] (Interface signature)
+          |> List.map serialize_selection_range
+          |> Protocol.array
+        else empty_array)
   in
   print_endline result
