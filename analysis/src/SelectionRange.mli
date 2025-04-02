@@ -1,1 +1,1 @@
-val selectionRange : path:string -> line:int -> col:int -> unit
+val selectionRange : path:string -> cursors:(int * int) list -> unit

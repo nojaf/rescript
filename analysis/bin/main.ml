@@ -208,9 +208,20 @@ let main () =
       (Json.escape (CreateInterface.command ~path ~cmiFile))
   | [_; "format"; path] ->
     Printf.printf "\"%s\"" (Json.escape (Commands.format ~path))
-  | [_; "selectionRange"; path; line; col] ->
-    SelectionRange.selectionRange ~path ~line:(int_of_string line)
-      ~col:(int_of_string col)
+  | _ :: "selectionRange" :: path :: cursors ->
+    if List.length cursors mod 2 = 1 then
+      failwith "Invalid number of arguments for selectionRange"
+    else
+      let rec pairwise cont args =
+        match args with
+        | [] -> cont []
+        | [_] -> failwith "Invalid number of arguments for selectionRange"
+        | x :: y :: xs -> pairwise (fun acc -> (x, y) :: acc |> cont) xs
+      in
+      let cursors =
+        cursors |> List.map int_of_string |> pairwise (fun cursors -> cursors)
+      in
+      SelectionRange.selectionRange ~path ~cursors
   | [_; "test"; path] -> Commands.test ~path
   | args when List.mem "-h" args || List.mem "--help" args -> prerr_endline help
   | _ ->

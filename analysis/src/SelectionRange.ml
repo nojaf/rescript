@@ -1,7 +1,5 @@
 open Location
 
-(* todo, might have multiple offsets... *)
-
 type selectionRange = {range: Protocol.range; parent: selectionRange option}
 
 type ast =
@@ -56,11 +54,6 @@ let process_ast (offsets : int list) (ast : ast) : selectionRange list =
              signature |> List.iter (iterator.signature_item iterator)
          in
 
-         !locations |> SeenLocationSet.elements
-         |> List.iter (fun loc ->
-                Format.printf "start %d end %d\n" loc.loc_start.pos_cnum
-                  loc.loc_end.pos_cnum);
-
          let rec visit parent_locations =
            match parent_locations with
            | [] -> None
@@ -68,17 +61,9 @@ let process_ast (offsets : int list) (ast : ast) : selectionRange list =
              Some {range = Utils.rangeOfLoc parent; parent = visit rest}
          in
          match SeenLocationSet.elements !locations with
-         | [] ->
-           print_endline "No locations found";
-           None
+         | [] -> None
          | loc :: parents ->
            Some {range = Utils.rangeOfLoc loc; parent = visit parents})
-
-(* |> List.iter (fun loc ->
-         Format.printf "start: (%d, %d) end: (%d, %d)\n" loc.loc_start.pos_lnum
-           (loc.loc_start.pos_cnum - loc.loc_start.pos_bol)
-           loc.loc_end.pos_lnum
-           (loc.loc_end.pos_cnum - loc.loc_end.pos_bol)); *)
 
 let serialize_selection_range (range : selectionRange) =
   let open Protocol in
@@ -94,35 +79,38 @@ let serialize_selection_range (range : selectionRange) =
 (* 
   Implements the selection range request for the LSP.
   See https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_selectionRange
+
+  Test using dune exec rescript-editor-analysis -- selectionRange A.res 3 4
+  Pretty print that using dune exec rescript-editor-analysis -- selectionRange A.res 1 5 | bunx prettier --parser json
 *)
-let selectionRange ~(path : string) ~(line : int) ~(col : int) =
+let selectionRange ~(path : string) ~(cursors : (int * int) list) =
   let result =
     let textOpt = Files.readFile path in
     match textOpt with
     | None | Some "" -> empty_array
-    | Some text -> (
-      match Pos.positionToOffset text (line, col) with
-      | None ->
-        print_endline "No offset found";
-        empty_array
-      | Some offset ->
-        print_endline ("offset: " ^ string_of_int offset);
-        if Filename.check_suffix path ".res" then
-          let parser =
-            Res_driver.parsing_engine.parse_implementation ~for_printer:false
-          in
-          let {Res_driver.parsetree = implementation} = parser ~filename:path in
-          process_ast [offset] (Implementation implementation)
-          |> List.map serialize_selection_range
-          |> Protocol.array
-        else if Filename.check_suffix path ".resi" then
-          let parser =
-            Res_driver.parsing_engine.parse_interface ~for_printer:false
-          in
-          let {Res_driver.parsetree = signature} = parser ~filename:path in
-          process_ast [offset] (Interface signature)
-          |> List.map serialize_selection_range
-          |> Protocol.array
-        else empty_array)
+    | Some text ->
+      let offsets =
+        cursors
+        |> List.filter_map (fun (line, col) ->
+               Pos.positionToOffset text (line, col))
+      in
+
+      if Filename.check_suffix path ".res" then
+        let parser =
+          Res_driver.parsing_engine.parse_implementation ~for_printer:false
+        in
+        let {Res_driver.parsetree = implementation} = parser ~filename:path in
+        process_ast offsets (Implementation implementation)
+        |> List.map serialize_selection_range
+        |> Protocol.array
+      else if Filename.check_suffix path ".resi" then
+        let parser =
+          Res_driver.parsing_engine.parse_interface ~for_printer:false
+        in
+        let {Res_driver.parsetree = signature} = parser ~filename:path in
+        process_ast offsets (Interface signature)
+        |> List.map serialize_selection_range
+        |> Protocol.array
+      else empty_array
   in
   print_endline result
