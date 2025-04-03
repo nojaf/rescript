@@ -1,1 +1,1 @@
-val selectionRange : path:string -> cursors:(int * int) list -> unit
+val selectionRange : path:string -> cursors:(int * int) list -> Lsp.Types.SelectionRange.t list

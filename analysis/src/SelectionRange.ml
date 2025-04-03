@@ -1,7 +1,5 @@
 open Location
 
-type selectionRange = {range: Protocol.range; parent: selectionRange option}
-
 type ast =
   | Implementation of Parsetree.structure
   | Interface of Parsetree.signature
@@ -29,9 +27,15 @@ module SeenLocationSet = Set.Make (struct
         else compare a.loc_end.pos_cnum b.loc_end.pos_cnum
 end)
 
-let empty_array = "[]"
+let rangeOfLoc (loc : Location.t) : Lsp.Types.Range.t =
+  let open Lsp.Types in
+  let mkPosition (line, character) = {Lsp.Types.Position.line; character} in
+  let start = loc |> Loc.start |> mkPosition in
+  let end_ = loc |> Loc.end_ |> mkPosition in
+  {start; end_}
 
-let process_ast (offsets : int list) (ast : ast) : selectionRange list =
+let process_ast (offsets : int list) (ast : ast) :
+    Lsp.Types.SelectionRange.t list =
   offsets
   |> List.filter_map (fun offset ->
          let locations = ref SeenLocationSet.empty in
@@ -54,27 +58,18 @@ let process_ast (offsets : int list) (ast : ast) : selectionRange list =
              signature |> List.iter (iterator.signature_item iterator)
          in
 
+         let open Lsp.Types in
          let rec visit parent_locations =
            match parent_locations with
            | [] -> None
            | parent :: rest ->
-             Some {range = Utils.rangeOfLoc parent; parent = visit rest}
+             Some
+               {SelectionRange.range = rangeOfLoc parent; parent = visit rest}
          in
          match SeenLocationSet.elements !locations with
          | [] -> None
          | loc :: parents ->
-           Some {range = Utils.rangeOfLoc loc; parent = visit parents})
-
-let serialize_selection_range (range : selectionRange) =
-  let open Protocol in
-  let rec aux (range : selectionRange) =
-    stringifyObject
-      [
-        ("range", Some (stringifyRange range.range));
-        ("parent", Option.map aux range.parent);
-      ]
-  in
-  aux range
+           Some {SelectionRange.range = rangeOfLoc loc; parent = visit parents})
 
 (* 
   Implements the selection range request for the LSP.
@@ -83,34 +78,28 @@ let serialize_selection_range (range : selectionRange) =
   Test using dune exec rescript-editor-analysis -- selectionRange A.res 3 4
   Pretty print that using dune exec rescript-editor-analysis -- selectionRange A.res 1 5 | bunx prettier --parser json
 *)
-let selectionRange ~(path : string) ~(cursors : (int * int) list) =
-  let result =
-    let textOpt = Files.readFile path in
-    match textOpt with
-    | None | Some "" -> empty_array
-    | Some text ->
-      let offsets =
-        cursors
-        |> List.filter_map (fun (line, col) ->
-               Pos.positionToOffset text (line, col))
-      in
+let selectionRange ~(path : string) ~(cursors : (int * int) list) :
+    Lsp.Types.SelectionRange.t list =
+  let textOpt = Files.readFile path in
+  match textOpt with
+  | None | Some "" -> []
+  | Some text ->
+    let offsets =
+      cursors
+      |> List.filter_map (fun (line, col) ->
+             Pos.positionToOffset text (line, col))
+    in
 
-      if Filename.check_suffix path ".res" then
-        let parser =
-          Res_driver.parsing_engine.parse_implementation ~for_printer:false
-        in
-        let {Res_driver.parsetree = implementation} = parser ~filename:path in
-        process_ast offsets (Implementation implementation)
-        |> List.map serialize_selection_range
-        |> Protocol.array
-      else if Filename.check_suffix path ".resi" then
-        let parser =
-          Res_driver.parsing_engine.parse_interface ~for_printer:false
-        in
-        let {Res_driver.parsetree = signature} = parser ~filename:path in
-        process_ast offsets (Interface signature)
-        |> List.map serialize_selection_range
-        |> Protocol.array
-      else empty_array
-  in
-  print_endline result
+    if Filename.check_suffix path ".res" then
+      let parser =
+        Res_driver.parsing_engine.parse_implementation ~for_printer:false
+      in
+      let {Res_driver.parsetree = implementation} = parser ~filename:path in
+      process_ast offsets (Implementation implementation)
+    else if Filename.check_suffix path ".resi" then
+      let parser =
+        Res_driver.parsing_engine.parse_interface ~for_printer:false
+      in
+      let {Res_driver.parsetree = signature} = parser ~filename:path in
+      process_ast offsets (Interface signature)
+    else []

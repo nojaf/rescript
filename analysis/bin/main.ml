@@ -221,9 +221,12 @@ let main () =
       let cursors =
         cursors |> List.map int_of_string |> pairwise (fun cursors -> cursors)
       in
-      SelectionRange.selectionRange ~path ~cursors
+      let ranges = SelectionRange.selectionRange ~path ~cursors in
+      ranges |> List.map Lsp.Types.SelectionRange.yojson_of_t |> fun x ->
+      `List x |> Yojson.Safe.to_string |> print_endline
   | [_; "test"; path] -> Commands.test ~path
   | args when List.mem "-h" args || List.mem "--help" args -> prerr_endline help
+  | [_; "lsp"] -> LSPServer.run ()
   | _ ->
     prerr_endline help;
     exit 1

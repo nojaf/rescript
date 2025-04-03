@@ -26,7 +26,11 @@
    (>= 4.14))
   (cppo
    (= 1.8.0))
-  dune))
+  dune
+  linol
+  linol-eio
+  eio_main
+  logs))
 
 (package
  (name tools)
