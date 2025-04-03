@@ -45,6 +45,24 @@ class lsp_server =
 
     method spawn_query_handler f = Linol_eio.spawn f
 
+    (* Override the some capabilities that are not already supported by Linol *)
+    method config_modify_capabilities (c : Lsp.Types.ServerCapabilities.t) :
+        Lsp.Types.ServerCapabilities.t =
+      let open Lsp.Types.ServerCapabilities in
+      {
+        c with
+        completionProvider =
+          Some
+            {
+              allCommitCharacters = None;
+              completionItem = None;
+              triggerCharacters = Some ["."; ">"; "@"; "~"; "\""; "="; "("];
+              resolveProvider = Some true;
+              workDoneProgress = None;
+            };
+        selectionRangeProvider = Some (`Bool true);
+      }
+
     (* We define here a helper method that will:
        - process a document
        - store the state resulting from the processing
@@ -93,6 +111,16 @@ class lsp_server =
           let ranges = SelectionRange.selectionRange ~path ~cursors in
           Linol_eio.return ranges
         | _ -> Linol_eio.failwith "TODO: handle this request"
+
+    method on_req_completion ~notify_back:(_ : Linol_eio.Jsonrpc2.notify_back)
+        ~id:_ ~uri:_ ~pos:_ ~ctx:_ ~workDoneToken:_ ~partialResultToken:_
+        (_ : Linol_eio.doc_state) :
+        [ `CompletionList of Lsp.Types.CompletionList.t
+        | `List of Lsp.Types.CompletionItem.t list ]
+        option
+        Linol_eio.t =
+      (* shove in completion items *)
+      Linol_eio.return None
   end
 
 (* Main code
