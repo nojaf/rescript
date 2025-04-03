@@ -29,7 +29,7 @@ end)
 
 let rangeOfLoc (loc : Location.t) : Lsp.Types.Range.t =
   let open Lsp.Types in
-  let mkPosition (line, character) = {Lsp.Types.Position.line; character} in
+  let mkPosition (line, character) = {Position.line; character} in
   let start = loc |> Loc.start |> mkPosition in
   let end_ = loc |> Loc.end_ |> mkPosition in
   {start; end_}
