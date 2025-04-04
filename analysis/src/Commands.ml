@@ -11,6 +11,83 @@ let completion ~debug ~path ~pos ~currentFile =
   in
   completions |> Protocol.array |> print_endline
 
+module CompletionItemMapper = struct
+  open Lsp.Types
+
+  let map_kind (kind : int) : CompletionItemKind.t =
+    match kind with
+    | 9 -> CompletionItemKind.Module
+    | 4 -> CompletionItemKind.Constructor
+    | 5 -> CompletionItemKind.Field
+    | 22 -> CompletionItemKind.Struct
+    | 12 -> CompletionItemKind.Value
+    | _ (* 15 *) -> CompletionItemKind.Snippet
+
+  (* let map_kind_to_detail (kind : SharedTypes.Completion.kind) : CompletionItemLabelDetails.t = 
+    {} *)
+
+  let map_range (range : Protocol.range) : Range.t =
+    {
+      start = {line = range.start.line; character = range.start.character};
+      end_ = {line = range.end_.line; character = range.end_.character};
+    }
+
+  let map (item : Protocol.completionItem) : CompletionItem.t =
+    {
+      additionalTextEdits =
+        item.additionalTextEdits
+        |> Option.map (fun edits ->
+               edits
+               |> List.map (fun edit ->
+                      {
+                        TextEdit.newText = edit.Protocol.newText;
+                        range = map_range edit.range;
+                      }));
+      command = None;
+      commitCharacters = None;
+      data =
+        item.data
+        |> Option.map (fun data ->
+               `Assoc (data |> List.map (fun (k, v) -> (k, `String v))));
+      deprecated = None;
+      detail = Some item.detail;
+      documentation =
+        item.documentation
+        |> Option.map (fun doc ->
+               `MarkupContent
+                 {
+                   MarkupContent.kind = MarkupKind.Markdown;
+                   value = doc.Protocol.value;
+                 });
+      filterText = item.filterText;
+      insertText = item.insertText;
+      insertTextFormat =
+        item.insertTextFormat |> Option.map (fun _ -> InsertTextFormat.Snippet);
+      insertTextMode = None;
+      kind = Some (map_kind item.kind);
+      label = item.label;
+      labelDetails = None;
+      preselect = None;
+      sortText = item.sortText;
+      tags = Some (item.tags |> List.map (fun _ -> CompletionItemTag.Deprecated));
+      textEdit = None;
+      textEditText = None;
+    }
+end
+
+let completion_lsp ~debug ~path ~pos ~currentFile =
+  let completions =
+    match
+      Completions.getCompletions ~debug ~path ~pos ~currentFile ~forHover:false
+    with
+    | None -> []
+    | Some (completions, full, _) ->
+      completions
+      |> List.map (CompletionBackEnd.completionToItem ~full)
+      |> List.map CompletionItemMapper.map
+  in
+  completions
+
 let completionResolve ~path ~modulePath =
   (* We ignore the internal module path as of now because there's currently
      no use case for it. But, if we wanted to move resolving documentation

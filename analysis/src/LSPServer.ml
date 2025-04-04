@@ -15,14 +15,29 @@
      of a document are expected to be able to return.
 *)
 
-type state_after_processing = unit
+let write_file_to_tmp filename content : string =
+  let tmp_dir = Filename.get_temp_dir_name () in
+  let tmp_file = Filename.concat tmp_dir filename in
+  Eio_main.run (fun env ->
+      let fs = Eio.Stdenv.fs env in
+      let tmp_file_path = Eio.Path.(fs / tmp_dir / filename) in
+      let create = `If_missing 0o666 in
+      Eio.Path.save ~create tmp_file_path content;
+      tmp_file)
 
-let process_some_input_file (_file_contents : string) : state_after_processing =
-  ()
+let delete_file (path : string) =
+  Eio_main.run (fun env ->
+      try
+        let fs = Eio.Stdenv.fs env in
+        Eio.Path.unlink Eio.Path.(fs / path)
+      with _ -> ())
 
-let diagnostics (_state : state_after_processing) : Lsp.Types.Diagnostic.t list
-    =
-  []
+let is_rescript_file (uri : Lsp.Types.DocumentUri.t) : bool =
+  let ext = uri |> Lsp.Types.DocumentUri.to_path |> Filename.extension in
+  ext = ".res" || ext = ".resi"
+
+(* This is a placeholder for the actual implementation of the completion function.
+   It should return a list of completion items based on the current file and position. *)
 
 (* Lsp server class
 
@@ -39,9 +54,11 @@ class lsp_server =
   object (self)
     inherit Linol_eio.Jsonrpc2.server
 
-    (* one env per document *)
-    val buffers : (Lsp.Types.DocumentUri.t, state_after_processing) Hashtbl.t =
-      Hashtbl.create 32
+    val mutable extension_config = LSPConfig.default_config
+
+    (* This is a hashtable that will store the state of each document opened
+       by the server. The key is the uri of the document, and the value is
+       the state associated to this document. *)
 
     method spawn_query_handler f = Linol_eio.spawn f
 
@@ -63,6 +80,51 @@ class lsp_server =
         selectionRangeProvider = Some (`Bool true);
       }
 
+    method on_req_initialize ~(notify_back : Linol_eio.Jsonrpc2.notify_back)
+        (i : Lsp.Types.InitializeParams.t) :
+        Lsp.Types.InitializeResult.t Linol_eio.t =
+      let config =
+        match i.initializationOptions with
+        | None -> LSPConfig.default_config
+        | Some initializationOptions ->
+          LSPConfig.decode_extensionConfiguration initializationOptions
+      in
+      let snippetSupport =
+        match i.capabilities.textDocument with
+        | None -> false
+        | Some textDocument -> (
+          match textDocument.completion with
+          | None -> false
+          | Some completion -> (
+            match completion.completionItem with
+            | None -> false
+            | Some completionItem -> (
+              match completionItem.snippetSupport with
+              | None -> false
+              | Some snippetSupport -> snippetSupport)))
+      in
+      let config =
+        {
+          config with
+          LSPConfig.extensionClientCapabilities =
+            (match extension_config.extensionClientCapabilities with
+            | None ->
+              Some
+                {
+                  supportsMarkdownLinks = None;
+                  supportsSnippetSyntax = Some snippetSupport;
+                }
+            | Some extensionClientCapabilities ->
+              Some
+                {
+                  extensionClientCapabilities with
+                  supportsSnippetSyntax = Some snippetSupport;
+                });
+        }
+      in
+      extension_config <- config;
+      self#on_req_initialize ~notify_back i
+
     (* We define here a helper method that will:
        - process a document
        - store the state resulting from the processing
@@ -70,27 +132,29 @@ class lsp_server =
     *)
     method private _on_doc ~(notify_back : Linol_eio.Jsonrpc2.notify_back)
         (uri : Lsp.Types.DocumentUri.t) (contents : string) =
-      let new_state = process_some_input_file contents in
-      Hashtbl.replace buffers uri new_state;
-      let diags = diagnostics new_state in
-      notify_back#send_diagnostic diags
+      (* let new_state = process_some_input_file contents in *)
+      ignore (notify_back, uri, contents);
+      Linol_eio.return ()
+    (* let diags = diagnostics new_state in
+      notify_back#send_diagnostic diags *)
 
     (* We now override the [on_notify_doc_did_open] method that will be called
        by the server each time a new document is opened. *)
     method on_notif_doc_did_open ~notify_back d ~content : unit Linol_eio.t =
-      self#_on_doc ~notify_back d.uri content
+      if is_rescript_file d.uri then self#_on_doc ~notify_back d.uri content
+    (* TODO: a lot of logic happens here *)
 
     (* Similarly, we also override the [on_notify_doc_did_change] method that will be called
        by the server each time a new document is opened. *)
-    method on_notif_doc_did_change ~notify_back d _c ~old_content:_old
-        ~new_content =
-      self#_on_doc ~notify_back d.uri new_content
+    method on_notif_doc_did_change ~notify_back doc change_list
+        ~old_content:_old ~new_content =
+      if is_rescript_file doc.uri && List.length change_list > 0 then
+        self#_on_doc ~notify_back doc.uri new_content
 
     (* On document closes, we remove the state associated to the file from the global
        hashtable state, to avoid leaking memory. *)
     method on_notif_doc_did_close ~notify_back:_ d : unit Linol_eio.t =
-      Hashtbl.remove buffers d.uri;
-      ()
+      if is_rescript_file d.uri then Hashtbl.remove docs d.uri
 
     method on_request_unhandled : type r.
         notify_back:Linol_eio.Jsonrpc2.notify_back ->
@@ -113,14 +177,25 @@ class lsp_server =
         | _ -> Linol_eio.failwith "TODO: handle this request"
 
     method on_req_completion ~notify_back:(_ : Linol_eio.Jsonrpc2.notify_back)
-        ~id:_ ~uri:_ ~pos:_ ~ctx:_ ~workDoneToken:_ ~partialResultToken:_
-        (_ : Linol_eio.doc_state) :
+        ~id:_ ~(uri : Lsp.Types.DocumentUri.t) ~(pos : Lsp.Types.Position.t)
+        ~ctx:_ ~workDoneToken:_ ~partialResultToken:_ (_ : Linol_eio.doc_state)
+        :
         [ `CompletionList of Lsp.Types.CompletionList.t
         | `List of Lsp.Types.CompletionItem.t list ]
         option
         Linol_eio.t =
-      (* shove in completion items *)
-      Linol_eio.return None
+      let path = Lsp.Types.DocumentUri.to_path uri in
+      let doc = Hashtbl.find docs uri in
+      let tmp_name =
+        Format.sprintf "rescript_format_file_%d_" (Unix.getpid ())
+      in
+      let tmp_path = write_file_to_tmp tmp_name doc.content in
+      let completion_items =
+        Commands.completion_lsp ~debug:false ~path
+          ~pos:(pos.line, pos.character) ~currentFile:tmp_path
+      in
+      delete_file tmp_path;
+      Linol_eio.return (Some (`List completion_items))
   end
 
 (* Main code
