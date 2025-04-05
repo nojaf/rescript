@@ -26,7 +26,7 @@ let write_file_to_tmp content : string =
    so that users only need to override methods that they want the server to
    actually meaningfully interpret and respond to.
 *)
-class lsp_server =
+class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
   object (self)
     inherit Linol_eio.Jsonrpc2.server
 
@@ -99,6 +99,45 @@ class lsp_server =
         }
       in
       extension_config <- config;
+
+      (* Schedule a sink of the configuration settings from the client *)
+      let rec loop () =
+        let params =
+          {
+            Lsp.Types.ConfigurationParams.items =
+              [
+                {
+                  Lsp.Types.ConfigurationItem.section = Some "rescript.settings";
+                  scopeUri = None;
+                };
+              ];
+          }
+        in
+        let req = Lsp.Server_request.WorkspaceConfiguration params in
+        let on_response res =
+          match res with
+          | Ok [config_json] ->
+            extension_config <-
+              LSPConfig.decode_extensionConfiguration config_json;
+            Linol_eio.return ()
+          | Ok _ ->
+            (* Only expecting one config item *)
+            Linol_eio.return ()
+          | Error _err ->
+            (* TODO: probably wanna log this error somehow, may send a notification to the client? *)
+            Linol_eio.return ()
+        in
+        let _req_id = notify_back#send_request req on_response in
+        Eio.Time.sleep (Eio.Stdenv.clock env) 10.;
+        loop ()
+      in
+      let periodic_task () =
+        try loop ()
+        with Eio.Cancel.Cancelled _ -> Eio.traceln "Periodic task cancelled"
+      in
+      (* periodic_task should be handled by the lifetime of the Switch? *)
+      Eio.Fiber.fork ~sw periodic_task;
+
       self#on_req_initialize ~notify_back i
 
     (* We only care about ReScript files *)
@@ -184,7 +223,8 @@ class lsp_server =
    and runs it as a task. *)
 let run () =
   Eio_main.run @@ fun env ->
-  let s = new lsp_server in
+  Eio.Switch.run @@ fun sw ->
+  let s = new lsp_server env sw in
   let server = Linol_eio.Jsonrpc2.create_stdio ~env s in
   let task () =
     let shutdown () = s#get_status = `ReceivedExit in
@@ -196,6 +236,3 @@ let run () =
     let e = Printexc.to_string e in
     Printf.eprintf "error: %s\n%!" e;
     exit 1
-
-(* Finally, we actually run the server *)
-(* let () = run () *)

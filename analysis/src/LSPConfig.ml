@@ -68,26 +68,6 @@ let decode_extensionClientCapabilities json =
       json |> member "supportsSnippetSyntax" |> to_bool_option;
   }
 
-let decode_extensionConfiguration (json : Yojson.Safe.t) =
-  {
-    askToStartBuild = json |> member "askToStartBuild" |> to_bool_option;
-    inlayHints = json |> member "inlayHints" |> to_option decode_inlayHints;
-    codeLens = json |> member "codeLens" |> to_bool_option;
-    binaryPath = json |> member "binaryPath" |> to_string_option;
-    platformPath = json |> member "platformPath" |> to_string_option;
-    signatureHelp =
-      json |> member "signatureHelp" |> to_option decode_signatureHelp;
-    incrementalTypechecking =
-      json
-      |> member "incrementalTypechecking"
-      |> to_option decode_incrementalTypechecking;
-    cache = json |> member "cache" |> to_option decode_cache;
-    extensionClientCapabilities =
-      json
-      |> member "extensionClientCapabilities"
-      |> to_option decode_extensionClientCapabilities;
-  }
-
 let default_config : extensionConfiguration =
   {
     askToStartBuild = Some true;
@@ -107,3 +87,27 @@ let default_config : extensionConfiguration =
     cache = Some {projectConfig = Some {enable = Some true}};
     extensionClientCapabilities = None;
   }
+
+let decode_extensionConfiguration (json : Yojson.Safe.t) =
+  try
+    {
+      askToStartBuild = json |> member "askToStartBuild" |> to_bool_option;
+      inlayHints = json |> member "inlayHints" |> to_option decode_inlayHints;
+      codeLens = json |> member "codeLens" |> to_bool_option;
+      binaryPath = json |> member "binaryPath" |> to_string_option;
+      platformPath = json |> member "platformPath" |> to_string_option;
+      signatureHelp =
+        json |> member "signatureHelp" |> to_option decode_signatureHelp;
+      incrementalTypechecking =
+        json
+        |> member "incrementalTypechecking"
+        |> to_option decode_incrementalTypechecking;
+      cache = json |> member "cache" |> to_option decode_cache;
+      extensionClientCapabilities =
+        json
+        |> member "extensionClientCapabilities"
+        |> to_option decode_extensionClientCapabilities;
+    }
+  with _ ->
+    (* TODO: log when we had a parsing problem, maybe show a notification to the client? *)
+    default_config
