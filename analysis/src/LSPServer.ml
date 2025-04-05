@@ -1,40 +1,16 @@
-(* This file is free software, part of linol. See file "LICENSE" for more information *)
-
-(* Some user code
-
-   The code here is just a placeholder to make this file compile, it is expected
-   that users have an implementation of a processing function for input contents.
-
-   Here we expect a few things:
-   - a type to represent a state/environment that results from processing an
-     input file
-   - a function procdessing an input file (given the file contents as a string),
-     which return a state/environment
-   - a function to extract a list of diagnostics from a state/environment.
-     Diagnostics includes all the warnings, errors and messages that the processing
-     of a document are expected to be able to return.
-*)
-
-let write_file_to_tmp filename content : string =
-  let tmp_dir = Filename.get_temp_dir_name () in
-  let tmp_file = Filename.concat tmp_dir filename in
-  Eio_main.run (fun env ->
-      let fs = Eio.Stdenv.fs env in
-      let tmp_file_path = Eio.Path.(fs / tmp_dir / filename) in
-      let create = `If_missing 0o666 in
-      Eio.Path.save ~create tmp_file_path content;
-      tmp_file)
-
-let delete_file (path : string) =
-  Eio_main.run (fun env ->
-      try
-        let fs = Eio.Stdenv.fs env in
-        Eio.Path.unlink Eio.Path.(fs / path)
-      with _ -> ())
-
-let is_rescript_file (uri : Lsp.Types.DocumentUri.t) : bool =
-  let ext = uri |> Lsp.Types.DocumentUri.to_path |> Filename.extension in
-  ext = ".res" || ext = ".resi"
+let write_file_to_tmp content : string =
+  let tmp_file =
+    Filename.temp_file "rescript_format_file_"
+      (Format.sprintf "_%d" (Unix.getpid ()))
+  in
+  let channel = open_out tmp_file in
+  try
+    output_string channel content;
+    close_out channel;
+    tmp_file
+  with e ->
+    close_out_noerr channel;
+    raise e
 
 (* This is a placeholder for the actual implementation of the completion function.
    It should return a list of completion items based on the current file and position. *)
@@ -125,6 +101,12 @@ class lsp_server =
       extension_config <- config;
       self#on_req_initialize ~notify_back i
 
+    (* We only care about ReScript files *)
+    method filter_text_document (doc_uri : Lsp.Types.DocumentUri.t) : bool =
+      let path = Lsp.Types.DocumentUri.to_path doc_uri in
+      let ext = Filename.extension path in
+      ext = ".res" || ext = ".resi"
+
     (* We define here a helper method that will:
        - process a document
        - store the state resulting from the processing
@@ -141,20 +123,22 @@ class lsp_server =
     (* We now override the [on_notify_doc_did_open] method that will be called
        by the server each time a new document is opened. *)
     method on_notif_doc_did_open ~notify_back d ~content : unit Linol_eio.t =
-      if is_rescript_file d.uri then self#_on_doc ~notify_back d.uri content
+      ignore (notify_back, d, content);
+      Linol_eio.return ()
     (* TODO: a lot of logic happens here *)
 
     (* Similarly, we also override the [on_notify_doc_did_change] method that will be called
        by the server each time a new document is opened. *)
     method on_notif_doc_did_change ~notify_back doc change_list
         ~old_content:_old ~new_content =
-      if is_rescript_file doc.uri && List.length change_list > 0 then
-        self#_on_doc ~notify_back doc.uri new_content
+      ignore (notify_back, doc, change_list, new_content);
+      Linol_eio.return ()
 
     (* On document closes, we remove the state associated to the file from the global
        hashtable state, to avoid leaking memory. *)
     method on_notif_doc_did_close ~notify_back:_ d : unit Linol_eio.t =
-      if is_rescript_file d.uri then Hashtbl.remove docs d.uri
+      ignore d;
+      Linol_eio.return ()
 
     method on_request_unhandled : type r.
         notify_back:Linol_eio.Jsonrpc2.notify_back ->
@@ -186,15 +170,12 @@ class lsp_server =
         Linol_eio.t =
       let path = Lsp.Types.DocumentUri.to_path uri in
       let doc = Hashtbl.find docs uri in
-      let tmp_name =
-        Format.sprintf "rescript_format_file_%d_" (Unix.getpid ())
-      in
-      let tmp_path = write_file_to_tmp tmp_name doc.content in
+      let tmp_path = write_file_to_tmp doc.content in
       let completion_items =
         Commands.completion_lsp ~debug:false ~path
           ~pos:(pos.line, pos.character) ~currentFile:tmp_path
       in
-      delete_file tmp_path;
+      Sys.remove tmp_path;
       Linol_eio.return (Some (`List completion_items))
   end
 
