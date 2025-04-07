@@ -240,12 +240,19 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
       | n -> self#on_notification_unhandled ~notify_back n
   end
 
+let setup_logging level =
+  Logs.set_reporter
+    (Logs.format_reporter ~app:Format.err_formatter ~dst:Format.err_formatter ());
+  Logs.set_level level;
+  Logs.info (fun m -> m "Logging initialised")
+
 (* Main code
    This is the code that creates an instance of the lsp server class
    and runs it as a task. *)
 let run () =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
+  setup_logging (Some Logs.Debug);
   let s = new lsp_server env sw in
   let server = Linol_eio.Jsonrpc2.create_stdio ~env s in
   let task () =
