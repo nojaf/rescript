@@ -237,7 +237,8 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
         (notification : Lsp.Client_notification.t) : unit Linol_eio.t =
       match notification with
       | Lsp.Client_notification.Initialized ->
-        (* register file watchers *)
+        (* Register file watchers, in theory we should not send this request
+           if the dynamicRegistration value was false in on_req_initialize *)
         let open Lsp.Types in
         let path = "/Users/nojaf/Projects/daisy/README.md" in
         let file_watcher =
