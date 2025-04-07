@@ -26,7 +26,7 @@ let write_file_to_tmp content : string =
    so that users only need to override methods that they want the server to
    actually meaningfully interpret and respond to.
 *)
-class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
+class lsp_server =
   object (_self)
     inherit Linol_eio.Jsonrpc2.server as parent
 
@@ -100,44 +100,6 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
         }
       in
       extension_config <- config;
-
-      (* Schedule a sink of the configuration settings from the client *)
-      let rec loop () =
-        let params =
-          {
-            Lsp.Types.ConfigurationParams.items =
-              [
-                {
-                  Lsp.Types.ConfigurationItem.section = Some "rescript.settings";
-                  scopeUri = None;
-                };
-              ];
-          }
-        in
-        let req = Lsp.Server_request.WorkspaceConfiguration params in
-        let on_response res =
-          match res with
-          | Ok [config_json] ->
-            extension_config <-
-              LSPConfig.decode_extensionConfiguration config_json;
-            Linol_eio.return ()
-          | Ok _ ->
-            (* Only expecting one config item *)
-            Linol_eio.return ()
-          | Error _err ->
-            (* TODO: probably wanna log this error somehow, may send a notification to the client? *)
-            Linol_eio.return ()
-        in
-        let _req_id = notify_back#send_request req on_response in
-        Eio.Time.sleep (Eio.Stdenv.clock env) 10.;
-        loop ()
-      in
-      let periodic_task () =
-        try loop ()
-        with Eio.Cancel.Cancelled _ -> Eio.traceln "Periodic task cancelled"
-      in
-      (* periodic_task should be handled by the lifetime of the Switch? *)
-      Eio.Fiber.fork ~sw periodic_task;
 
       (* Ask the client to watch files *)
       let client_can_watch_files =
@@ -284,6 +246,11 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
                      | FileChangeType.Deleted -> "deleted"
                      | FileChangeType.Changed -> "changed")));
         Linol_eio.return ()
+      | Lsp.Client_notification.ChangeConfiguration changes ->
+        Logs.info (fun m -> m "Configuration changed from client");
+        extension_config <-
+          LSPConfig.decode_extensionConfiguration changes.settings;
+        Linol_eio.return ()
       | n -> parent#on_notification_unhandled ~notify_back n
   end
 
@@ -298,9 +265,8 @@ let setup_logging level =
    and runs it as a task. *)
 let run () =
   Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
   setup_logging (Some Logs.Debug);
-  let s = new lsp_server env sw in
+  let s = new lsp_server in
   let server = Linol_eio.Jsonrpc2.create_stdio ~env s in
   let task () =
     let shutdown () = s#get_status = `ReceivedExit in
