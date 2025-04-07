@@ -27,8 +27,8 @@ let write_file_to_tmp content : string =
    actually meaningfully interpret and respond to.
 *)
 class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
-  object (self)
-    inherit Linol_eio.Jsonrpc2.server
+  object (_self)
+    inherit Linol_eio.Jsonrpc2.server as parent
 
     val mutable extension_config = LSPConfig.default_config
 
@@ -148,25 +148,26 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
             synchronization.dynamicRegistration)
         |> Option.value ~default:false
       in
-      (if not client_can_watch_files then
-         let params =
-           Lsp.Types.ShowMessageParams.create
-             ~message:
-               "The LSP Client does not support file watching. This is a \
-                required feature for the ReScript LSP server to work properly. \
-                Please update your LSP client to a version that supports file \
-                watching."
-             ~type_:Lsp.Types.MessageType.Error
-         in
-         let n = Lsp.Server_notification.ShowMessage params in
-         let _ = notify_back#send_notification n in
-         ());
+      if not client_can_watch_files then
+        let params =
+          Lsp.Types.ShowMessageParams.create
+            ~message:
+              "The LSP Client does not support file watching. This is a \
+               required feature for the ReScript LSP server to work properly. \
+               Please update your LSP client to a version that supports file \
+               watching."
+            ~type_:Lsp.Types.MessageType.Error
+        in
+        let n = Lsp.Server_notification.ShowMessage params in
+        let _ = notify_back#send_notification n in
+        ()
+      else Logs.debug (fun m -> m "Client supports file watching");
 
       (* Notify the client that it is unsupported. 
          We depend on file watching on the client side to detect changes in build artifacts. 
          OCaml lacks a built-in, cross-platform solution for this, 
          so the responsibility falls to the client. *)
-      Linol_eio.return self#on_req_initialize ~notify_back i
+      Linol_eio.return parent#on_req_initialize ~notify_back i
 
     (* We only care about ReScript files *)
     method filter_text_document (doc_uri : Lsp.Types.DocumentUri.t) : bool =
@@ -212,7 +213,7 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
           in
           let ranges = SelectionRange.selectionRange ~path ~cursors in
           Linol_eio.return ranges
-        | _ -> Linol_eio.return self#on_request_unhandled ~notify_back ~id req
+        | _ -> Linol_eio.return parent#on_request_unhandled ~notify_back ~id req
 
     method on_req_completion ~notify_back:(_ : Linol_eio.Jsonrpc2.notify_back)
         ~id:_ ~(uri : Lsp.Types.DocumentUri.t) ~(pos : Lsp.Types.Position.t)
@@ -237,10 +238,11 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
         (notification : Lsp.Client_notification.t) : unit Linol_eio.t =
       match notification with
       | Lsp.Client_notification.Initialized ->
+        Logs.info (fun m -> m "Received initialized");
         (* Register file watchers, in theory we should not send this request
            if the dynamicRegistration value was false in on_req_initialize *)
         let open Lsp.Types in
-        let path = "/Users/nojaf/Projects/daisy/README.md" in
+        let path = "**/README.md" in
         let file_watcher =
           FileSystemWatcher.create ~globPattern:(`Pattern path) ()
         in
@@ -270,7 +272,19 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
         in
         let _req_id = notify_back#send_request req on_response in
         Linol_eio.return ()
-      | n -> self#on_notification_unhandled ~notify_back n
+      | Lsp.Client_notification.DidChangeWatchedFiles params ->
+        let open Lsp.Types in
+        params.changes
+        |> List.iter (fun change ->
+               Logs.info (fun m ->
+                   m "File %s was %s"
+                     (DocumentUri.to_string change.FileEvent.uri)
+                     (match change.type_ with
+                     | FileChangeType.Created -> "created"
+                     | FileChangeType.Deleted -> "deleted"
+                     | FileChangeType.Changed -> "changed")));
+        Linol_eio.return ()
+      | n -> parent#on_notification_unhandled ~notify_back n
   end
 
 let setup_logging level =

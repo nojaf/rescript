@@ -226,7 +226,7 @@ let main () =
       `List x |> Yojson.Safe.to_string |> print_endline
   | [_; "test"; path] -> Commands.test ~path
   | args when List.mem "-h" args || List.mem "--help" args -> prerr_endline help
-  | [_; "lsp"] -> LSPServer.run ()
+  | _ :: "lsp" :: _ -> LSPServer.run ()
   | _ ->
     prerr_endline help;
     exit 1
