@@ -236,7 +236,39 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
         ~(notify_back : Linol_eio.Jsonrpc2.notify_back)
         (notification : Lsp.Client_notification.t) : unit Linol_eio.t =
       match notification with
-      | Lsp.Client_notification.Initialized -> Linol_eio.return ()
+      | Lsp.Client_notification.Initialized ->
+        (* register file watchers *)
+        let open Lsp.Types in
+        let path = "/Users/nojaf/Projects/daisy/README.md" in
+        let file_watcher =
+          FileSystemWatcher.create ~globPattern:(`Pattern path) ()
+        in
+        let registration_options =
+          DidChangeWatchedFilesRegistrationOptions.create
+            ~watchers:[file_watcher]
+          |> DidChangeWatchedFilesRegistrationOptions.yojson_of_t
+        in
+        let registration =
+          Registration.create ~id:"rescript_file_watcher"
+            ~method_:"workspace/didChangeWatchedFiles"
+            ~registerOptions:registration_options ()
+        in
+        let registration_params =
+          RegistrationParams.create ~registrations:[registration]
+        in
+        let req =
+          Lsp.Server_request.ClientRegisterCapability registration_params
+        in
+        let on_response result =
+          (match result with
+          | Error _ ->
+            Logs.err (fun m ->
+                m "Failed to registering file watcher for %s" path)
+          | _ -> ());
+          Linol_eio.return ()
+        in
+        let _req_id = notify_back#send_request req on_response in
+        Linol_eio.return ()
       | n -> self#on_notification_unhandled ~notify_back n
   end
 
