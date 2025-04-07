@@ -59,6 +59,7 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
     method on_req_initialize ~(notify_back : Linol_eio.Jsonrpc2.notify_back)
         (i : Lsp.Types.InitializeParams.t) :
         Lsp.Types.InitializeResult.t Linol_eio.t =
+      (* Process client configuration *)
       let config =
         match i.initializationOptions with
         | None -> LSPConfig.default_config
@@ -138,26 +139,40 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
       (* periodic_task should be handled by the lifetime of the Switch? *)
       Eio.Fiber.fork ~sw periodic_task;
 
-      self#on_req_initialize ~notify_back i
+      (* Ask the client to watch files *)
+      let client_can_watch_files =
+        i.capabilities.textDocument |> fun td ->
+        Option.bind td (fun textDocument -> textDocument.synchronization)
+        |> fun s ->
+        Option.bind s (fun synchronization ->
+            synchronization.dynamicRegistration)
+        |> Option.value ~default:false
+      in
+      (if not client_can_watch_files then
+         let params =
+           Lsp.Types.ShowMessageParams.create
+             ~message:
+               "The LSP Client does not support file watching. This is a \
+                required feature for the ReScript LSP server to work properly. \
+                Please update your LSP client to a version that supports file \
+                watching."
+             ~type_:Lsp.Types.MessageType.Error
+         in
+         let n = Lsp.Server_notification.ShowMessage params in
+         let _ = notify_back#send_notification n in
+         ());
+
+      (* Notify the client that it is unsupported. 
+         We depend on file watching on the client side to detect changes in build artifacts. 
+         OCaml lacks a built-in, cross-platform solution for this, 
+         so the responsibility falls to the client. *)
+      Linol_eio.return self#on_req_initialize ~notify_back i
 
     (* We only care about ReScript files *)
     method filter_text_document (doc_uri : Lsp.Types.DocumentUri.t) : bool =
       let path = Lsp.Types.DocumentUri.to_path doc_uri in
       let ext = Filename.extension path in
       ext = ".res" || ext = ".resi"
-
-    (* We define here a helper method that will:
-       - process a document
-       - store the state resulting from the processing
-       - return the diagnostics from the new state
-    *)
-    method private _on_doc ~(notify_back : Linol_eio.Jsonrpc2.notify_back)
-        (uri : Lsp.Types.DocumentUri.t) (contents : string) =
-      (* let new_state = process_some_input_file contents in *)
-      ignore (notify_back, uri, contents);
-      Linol_eio.return ()
-    (* let diags = diagnostics new_state in
-      notify_back#send_diagnostic diags *)
 
     (* We now override the [on_notify_doc_did_open] method that will be called
        by the server each time a new document is opened. *)
@@ -176,7 +191,7 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
     (* On document closes, we remove the state associated to the file from the global
        hashtable state, to avoid leaking memory. *)
     method on_notif_doc_did_close ~notify_back:_ d : unit Linol_eio.t =
-      ignore d;
+      Hashtbl.remove docs d.uri;
       Linol_eio.return ()
 
     method on_request_unhandled : type r.
@@ -184,7 +199,7 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
         id:Linol.Server.Req_id.t ->
         r Lsp.Client_request.t ->
         r Linol_eio.t =
-      fun ~notify_back:(_ : Linol_eio.Jsonrpc2.notify_back) ~id:_ req ->
+      fun ~(notify_back : Linol_eio.Jsonrpc2.notify_back) ~id req ->
         (* Linol.Log.debug (fun k -> k "req: unhandled request"); *)
         match req with
         | Lsp.Client_request.SelectionRange selectionRange ->
@@ -197,7 +212,7 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
           in
           let ranges = SelectionRange.selectionRange ~path ~cursors in
           Linol_eio.return ranges
-        | _ -> Linol_eio.failwith "TODO: handle this request"
+        | _ -> Linol_eio.return self#on_request_unhandled ~notify_back ~id req
 
     method on_req_completion ~notify_back:(_ : Linol_eio.Jsonrpc2.notify_back)
         ~id:_ ~(uri : Lsp.Types.DocumentUri.t) ~(pos : Lsp.Types.Position.t)
@@ -216,6 +231,13 @@ class lsp_server (env : Linol_eio.env) (sw : Eio.Switch.t) =
       in
       Sys.remove tmp_path;
       Linol_eio.return (Some (`List completion_items))
+
+    method on_notification_unhandled
+        ~(notify_back : Linol_eio.Jsonrpc2.notify_back)
+        (notification : Lsp.Client_notification.t) : unit Linol_eio.t =
+      match notification with
+      | Lsp.Client_notification.Initialized -> Linol_eio.return ()
+      | n -> self#on_notification_unhandled ~notify_back n
   end
 
 (* Main code
