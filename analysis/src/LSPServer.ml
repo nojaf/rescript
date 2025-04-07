@@ -111,6 +111,10 @@ class lsp_server =
         |> Option.value ~default:false
       in
       if not client_can_watch_files then
+        (* Notify the client that it is unsupported. 
+         We depend on file watching on the client side to detect changes in build artifacts. 
+         OCaml lacks a built-in, cross-platform solution for this, 
+         so the responsibility falls to the client. *)
         let params =
           Lsp.Types.ShowMessageParams.create
             ~message:
@@ -125,10 +129,9 @@ class lsp_server =
         ()
       else Logs.debug (fun m -> m "Client supports file watching");
 
-      (* Notify the client that it is unsupported. 
-         We depend on file watching on the client side to detect changes in build artifacts. 
-         OCaml lacks a built-in, cross-platform solution for this, 
-         so the responsibility falls to the client. *)
+      (* Create project root objects *)
+
+      (* Call the base method, this will merge in the server capabilities defined above *)
       Linol_eio.return parent#on_req_initialize ~notify_back i
 
     (* We only care about ReScript files *)
@@ -204,13 +207,21 @@ class lsp_server =
         (* Register file watchers, in theory we should not send this request
            if the dynamicRegistration value was false in on_req_initialize *)
         let open Lsp.Types in
-        let path = "**/README.md" in
-        let file_watcher =
-          FileSystemWatcher.create ~globPattern:(`Pattern path) ()
+        let compiler_log = "lib/bs/.compiler.log" in
+        let build_ninja = "lib/bs/.build.ninja" in
+        let file_watchers =
+          match extension_config.cache with
+          | Some {LSPConfig.projectConfig = Some {enable = Some true}} ->
+            [
+              FileSystemWatcher.create ~globPattern:(`Pattern compiler_log) ();
+              FileSystemWatcher.create ~globPattern:(`Pattern build_ninja) ();
+            ]
+          | _ ->
+            [FileSystemWatcher.create ~globPattern:(`Pattern compiler_log) ()]
         in
         let registration_options =
           DidChangeWatchedFilesRegistrationOptions.create
-            ~watchers:[file_watcher]
+            ~watchers:file_watchers
           |> DidChangeWatchedFilesRegistrationOptions.yojson_of_t
         in
         let registration =
@@ -228,7 +239,7 @@ class lsp_server =
           (match result with
           | Error _ ->
             Logs.err (fun m ->
-                m "Failed to registering file watcher for %s" path)
+                m "Failed to registering file watchers with the client")
           | _ -> ());
           Linol_eio.return ()
         in
