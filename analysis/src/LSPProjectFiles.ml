@@ -15,7 +15,7 @@ type projectFiles = {
   hasPromptedToStartBuild: promptedToStartBuild;
 }
 
-let mk_project_files _root_path =
+let mk_project_files root_path =
   {
     openFiles = StringSet.empty;
     filesWithDiagnostics = StringSet.empty;
@@ -23,6 +23,9 @@ let mk_project_files _root_path =
     rescriptVersion = None;
     bscBinaryLocation = None;
     editorAnalysisLocation = None;
-    namespaceName = None;
+    namespaceName =
+      (match LSPUtils.get_namespace_name_from_config_file root_path with
+      | Ok namespace -> Some namespace
+      | Error _ -> None);
     hasPromptedToStartBuild = Never;
   }

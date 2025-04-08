@@ -144,8 +144,8 @@ class lsp_server =
                 ~default:false
             in
             (* Create the incremental file folder *)
-            IncrementalCompilation.recreate_incremental_file_folder root_path
-              ~debug;
+            IncrementalCompilation.recreate_incremental_file_folder debug
+              root_path;
             let projectFiles = LSPProjectFiles.mk_project_files root_path in
             Hashtbl.add project_files root_path projectFiles)
           workspaceFolders
