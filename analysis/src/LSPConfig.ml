@@ -109,5 +109,6 @@ let decode_extensionConfiguration (json : Yojson.Safe.t) =
         |> to_option decode_extensionClientCapabilities;
     }
   with _ ->
+    Logs.err (fun m -> m "failure to parse extensionConfig");
     (* TODO: log when we had a parsing problem, maybe show a notification to the client? *)
     default_config

@@ -65,8 +65,14 @@ class lsp_server =
       let config =
         match i.initializationOptions with
         | None -> LSPConfig.default_config
-        | Some initializationOptions ->
-          LSPConfig.decode_extensionConfiguration initializationOptions
+        | Some initializationOptions -> (
+          match
+            Yojson.Safe.Util.member "extensionConfiguration"
+              initializationOptions
+          with
+          | `Null -> LSPConfig.default_config
+          | extensionConfiguration ->
+            LSPConfig.decode_extensionConfiguration extensionConfiguration)
       in
       let snippetSupport =
         match i.capabilities.textDocument with
@@ -190,6 +196,52 @@ class lsp_server =
             pf with
             openFiles = LSPProjectFiles.StringSet.add file_path pf.openFiles;
           };
+        let bsbLockPath = Filename.concat pf.root_path ".bsb.lock" in
+        Logs.debug (fun m ->
+            m "haz prompted to start build: %s, askToStartBuild: %b"
+              (match pf.hasPromptedToStartBuild with
+              | LSPProjectFiles.No -> "No"
+              | LSPProjectFiles.Yes -> "Yes"
+              | LSPProjectFiles.Never -> "Never")
+              (Option.value ~default:false extension_config.askToStartBuild));
+        (* Check if we need to prompt the user to start a build *)
+        (match
+           (pf.hasPromptedToStartBuild, extension_config.askToStartBuild)
+         with
+        | LSPProjectFiles.No, Some true when not (Sys.file_exists bsbLockPath)
+          ->
+          Logs.info (fun m -> m "Prompt user to start build");
+          let action =
+            Lsp.Types.MessageActionItem.create ~title:"Start build"
+          in
+          let params =
+            Lsp.Types.ShowMessageRequestParams.create ~actions:[action]
+              ~message:
+                "Start a build for this project to get the freshest data?"
+              ~type_:Lsp.Types.MessageType.Info ()
+          in
+          let req = Lsp.Server_request.ShowMessageRequest params in
+          let on_response result =
+            (match result with
+            | Error _ ->
+              Logs.err (fun m ->
+                  m "Failed to ask the client to build the project")
+            | Ok (Some _) ->
+              Logs.info (fun m -> m "Imagine a Rewatch build happening here")
+            | Ok _ ->
+              Logs.warn (fun m ->
+                  m
+                    "Client responded to the build request without an action. \
+                     Kinda sus"));
+            Linol_eio.return ()
+          in
+          let _req_id =
+            Logs.info (fun m -> m "Sending ask to build request to client");
+            notify_back#send_request req on_response
+          in
+          ()
+        | _ -> ());
+
         (* TODO: send a request to the client if we didn't build yet or .bsb.lock is there *)
         (* We create a new document state for the document, and store it in the hashtable *)
         Linol_eio.return ()

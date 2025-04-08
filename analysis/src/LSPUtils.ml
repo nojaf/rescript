@@ -73,7 +73,10 @@ let mk_project_files (root_path : string) =
       (match get_namespace_name_from_config_file root_path with
       | Ok namespace -> Some namespace
       | Error _ -> None);
-    hasPromptedToStartBuild = Never;
+    hasPromptedToStartBuild =
+      (if Str.string_match (Str.regexp {|[/\\]node_modules[/\\]|}) root_path 0
+       then Never
+       else No);
   }
 
 (* TODO: This might be insufficient for mono repos 

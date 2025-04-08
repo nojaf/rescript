@@ -2,7 +2,7 @@ type filesDiagnostics = (string, Lsp.Types.Diagnostic.t list) Hashtbl.t
 
 module StringSet = Set.Make (String)
 
-type promptedToStartBuild = Never | Bool of bool
+type promptedToStartBuild = Never | Yes | No
 
 type projectFiles = {
   root_path: string;
