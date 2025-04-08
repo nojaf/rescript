@@ -31,6 +31,8 @@ class lsp_server =
     inherit Linol_eio.Jsonrpc2.server as parent
 
     val mutable extension_config = LSPConfig.default_config
+    val project_files : (string, LSPProjectFiles.projectFiles) Hashtbl.t =
+      Hashtbl.create 1
 
     (* This is a hashtable that will store the state of each document opened
        by the server. The key is the uri of the document, and the value is
@@ -130,6 +132,26 @@ class lsp_server =
       else Logs.debug (fun m -> m "Client supports file watching");
 
       (* Create project root objects *)
+      (match i.workspaceFolders with
+      | Some (Some workspaceFolders) ->
+        List.iter
+          (fun {Lsp.Types.WorkspaceFolder.uri} ->
+            let root_path = Lsp.Types.DocumentUri.to_path uri in
+            let debug =
+              Option.value
+                (Option.bind extension_config.incrementalTypechecking
+                   (fun incrTyChk -> incrTyChk.LSPConfig.debugLogging))
+                ~default:false
+            in
+            (* Create the incremental file folder *)
+            IncrementalCompilation.recreate_incremental_file_folder root_path
+              ~debug;
+            let projectFiles = LSPProjectFiles.mk_project_files root_path in
+            Hashtbl.add project_files root_path projectFiles)
+          workspaceFolders
+      | _ -> ());
+
+      (* Create the server capabilities *)
 
       (* Call the base method, this will merge in the server capabilities defined above *)
       Linol_eio.return parent#on_req_initialize ~notify_back i
