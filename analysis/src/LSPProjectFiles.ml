@@ -12,16 +12,3 @@ type projectFiles = {
   namespaceName: string option;
   hasPromptedToStartBuild: promptedToStartBuild;
 }
-
-let mk_project_files root_path =
-  {
-    openFiles = StringSet.empty;
-    filesWithDiagnostics = StringSet.empty;
-    filesDiagnostics = Hashtbl.create 0;
-    rescriptVersion = Bs_version.version;
-    namespaceName =
-      (match LSPUtils.get_namespace_name_from_config_file root_path with
-      | Ok namespace -> Some namespace
-      | Error _ -> None);
-    hasPromptedToStartBuild = Never;
-  }

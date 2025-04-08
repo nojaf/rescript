@@ -60,3 +60,32 @@ let get_namespace_name_from_config_file (root_path : string) :
            | `Bool value ->
              if not value then "" else to_camel_case build_schema.name
            | `String s -> s))
+
+let mk_project_files (root_path : string) =
+  let open LSPProjectFiles in
+  {
+    openFiles = StringSet.empty;
+    filesWithDiagnostics = StringSet.empty;
+    filesDiagnostics = Hashtbl.create 0;
+    rescriptVersion = Bs_version.version;
+    namespaceName =
+      (match get_namespace_name_from_config_file root_path with
+      | Ok namespace -> Some namespace
+      | Error _ -> None);
+    hasPromptedToStartBuild = Never;
+  }
+
+(* TODO: This might be insufficient for mono repos 
+   or other workspace setups I'm not catching right now. *)
+let find_project_files
+    (projectFiles : (string, LSPProjectFiles.projectFiles) Hashtbl.t)
+    (uri : Lsp.Types.DocumentUri.t) : LSPProjectFiles.projectFiles option =
+  let path = Lsp.Types.DocumentUri.to_path uri in
+  let rec visit path =
+    match Hashtbl.find_opt projectFiles path with
+    | Some projectFiles -> Some projectFiles
+    | None ->
+      let parent = Filename.dirname path in
+      if parent = path then None else visit (Filename.dirname path)
+  in
+  visit path

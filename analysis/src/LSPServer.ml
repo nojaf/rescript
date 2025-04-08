@@ -146,7 +146,7 @@ class lsp_server =
             (* Create the incremental file folder *)
             IncrementalCompilation.recreate_incremental_file_folder debug
               root_path;
-            let projectFiles = LSPProjectFiles.mk_project_files root_path in
+            let projectFiles = LSPUtils.mk_project_files root_path in
             Hashtbl.add project_files root_path projectFiles)
           workspaceFolders
       | _ -> ());
@@ -166,7 +166,25 @@ class lsp_server =
        by the server each time a new document is opened. *)
     method on_notif_doc_did_open ~notify_back d ~content : unit Linol_eio.t =
       ignore (notify_back, d, content);
-      Linol_eio.return ()
+      let file_path = Lsp.Types.DocumentUri.to_path d.uri in
+      let project_files = LSPUtils.find_project_files project_files d.uri in
+      match project_files with
+      | None ->
+        Logs.err (fun m -> m "Failed to find project files for %s" file_path);
+        let params =
+          Lsp.Types.ShowMessageParams.create
+            ~message:
+              (Format.sprintf
+                 "Cannot locate project directory when opening \"%s\"" file_path)
+            ~type_:Lsp.Types.MessageType.Error
+        in
+        let n = Lsp.Server_notification.ShowMessage params in
+        notify_back#send_notification n;
+        Linol_eio.return ()
+      | Some _project_files ->
+        Logs.info (fun m -> m "Found project files for \"%s\"" file_path);
+        (* We create a new document state for the document, and store it in the hashtable *)
+        Linol_eio.return ()
     (* TODO: a lot of logic happens here *)
 
     (* Similarly, we also override the [on_notify_doc_did_change] method that will be called
