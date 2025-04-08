@@ -167,8 +167,10 @@ class lsp_server =
     method on_notif_doc_did_open ~notify_back d ~content : unit Linol_eio.t =
       ignore (notify_back, d, content);
       let file_path = Lsp.Types.DocumentUri.to_path d.uri in
-      let project_files = LSPUtils.find_project_files project_files d.uri in
-      match project_files with
+      let current_project_files =
+        LSPUtils.find_project_files project_files d.uri
+      in
+      match current_project_files with
       | None ->
         Logs.err (fun m -> m "Failed to find project files for %s" file_path);
         let params =
@@ -181,8 +183,14 @@ class lsp_server =
         let n = Lsp.Server_notification.ShowMessage params in
         notify_back#send_notification n;
         Linol_eio.return ()
-      | Some _project_files ->
+      | Some pf ->
         Logs.info (fun m -> m "Found project files for \"%s\"" file_path);
+        Hashtbl.replace project_files pf.root_path
+          {
+            pf with
+            openFiles = LSPProjectFiles.StringSet.add file_path pf.openFiles;
+          };
+        (* TODO: send a request to the client if we didn't build yet or .bsb.lock is there *)
         (* We create a new document state for the document, and store it in the hashtable *)
         Linol_eio.return ()
     (* TODO: a lot of logic happens here *)

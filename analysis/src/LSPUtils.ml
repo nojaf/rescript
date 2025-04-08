@@ -64,6 +64,7 @@ let get_namespace_name_from_config_file (root_path : string) :
 let mk_project_files (root_path : string) =
   let open LSPProjectFiles in
   {
+    root_path;
     openFiles = StringSet.empty;
     filesWithDiagnostics = StringSet.empty;
     filesDiagnostics = Hashtbl.create 0;

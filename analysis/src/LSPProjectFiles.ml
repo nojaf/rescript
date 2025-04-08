@@ -5,6 +5,7 @@ module StringSet = Set.Make (String)
 type promptedToStartBuild = Never | Bool of bool
 
 type projectFiles = {
+  root_path: string;
   openFiles: StringSet.t;
   filesWithDiagnostics: StringSet.t;
   filesDiagnostics: filesDiagnostics;
