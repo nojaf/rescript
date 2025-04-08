@@ -1,14 +1,6 @@
-let path_join root parts =
-  let rec aux acc = function
-    | [] -> acc
-    | [x] -> Filename.concat acc x
-    | x :: xs -> aux (Filename.concat acc x) xs
-  in
-  aux root parts
-
 let remove_incremental_file_folder root_path =
   let incremental_file_folder =
-    path_join root_path ["lib"; "bs"; "___incremental"]
+    LSPUtils.path_join root_path ["lib"; "bs"; "___incremental"]
   in
   try
     if Sys.file_exists incremental_file_folder then

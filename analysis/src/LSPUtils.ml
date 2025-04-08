@@ -93,3 +93,45 @@ let find_project_files
       if parent = path then None else visit (Filename.dirname path)
   in
   visit path
+
+let path_join root parts =
+  let rec aux acc = function
+    | [] -> acc
+    | [x] -> Filename.concat acc x
+    | x :: xs -> aux (Filename.concat acc x) xs
+  in
+  aux root parts
+
+(* Run rewatch build process*)
+let run_rewatch (project_root : string) =
+  let cwd = project_root in
+  (* TODO: do OS check *)
+  (* Or consider FFI call into C version of rewatch? *)
+  let program =
+    path_join project_root
+      ["node_modules"; "rescript"; "darwinarm64"; "rewatch.exe"]
+  in
+  (* Save the current working directory *)
+  let original_cwd = Unix.getcwd () in
+  let should_change_cwd = original_cwd <> cwd in
+
+  (* Change to the specified working directory *)
+  try
+    if should_change_cwd then Unix.chdir cwd;
+
+    (* Run the process *)
+    let pid =
+      Unix.create_process program [||] Unix.stdin Unix.stdout Unix.stderr
+    in
+
+    (* Wait for the process to finish *)
+    let _, status = Unix.waitpid [] pid in
+
+    match status with
+    | Unix.WEXITED code ->
+      Logs.debug (fun m -> m "Process %s exited with code: %d" program code)
+    | Unix.WSIGNALED signal ->
+      Logs.debug (fun m -> m "Process %s killed by signal: %d" program signal)
+    | Unix.WSTOPPED signal ->
+      Logs.debug (fun m -> m "Process %s stopped by signal: %d" program signal)
+  with _ -> if should_change_cwd then Unix.chdir original_cwd

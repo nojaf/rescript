@@ -197,20 +197,12 @@ class lsp_server =
             openFiles = LSPProjectFiles.StringSet.add file_path pf.openFiles;
           };
         let bsbLockPath = Filename.concat pf.root_path ".bsb.lock" in
-        Logs.debug (fun m ->
-            m "haz prompted to start build: %s, askToStartBuild: %b"
-              (match pf.hasPromptedToStartBuild with
-              | LSPProjectFiles.No -> "No"
-              | LSPProjectFiles.Yes -> "Yes"
-              | LSPProjectFiles.Never -> "Never")
-              (Option.value ~default:false extension_config.askToStartBuild));
         (* Check if we need to prompt the user to start a build *)
         (match
            (pf.hasPromptedToStartBuild, extension_config.askToStartBuild)
          with
         | LSPProjectFiles.No, Some true when not (Sys.file_exists bsbLockPath)
           ->
-          Logs.info (fun m -> m "Prompt user to start build");
           let action =
             Lsp.Types.MessageActionItem.create ~title:"Start build"
           in
@@ -227,7 +219,8 @@ class lsp_server =
               Logs.err (fun m ->
                   m "Failed to ask the client to build the project")
             | Ok (Some _) ->
-              Logs.info (fun m -> m "Imagine a Rewatch build happening here")
+              LSPUtils.run_rewatch pf.root_path;
+              Logs.info (fun m -> m "Rewatch build happened")
             | Ok _ ->
               Logs.warn (fun m ->
                   m
@@ -235,11 +228,9 @@ class lsp_server =
                      Kinda sus"));
             Linol_eio.return ()
           in
-          let _req_id =
-            Logs.info (fun m -> m "Sending ask to build request to client");
-            notify_back#send_request req on_response
-          in
-          ()
+          let _req_id = notify_back#send_request req on_response in
+          Hashtbl.replace project_files pf.root_path
+            {pf with hasPromptedToStartBuild = LSPProjectFiles.Yes}
         | _ -> ());
 
         (* TODO: send a request to the client if we didn't build yet or .bsb.lock is there *)
@@ -308,16 +299,34 @@ class lsp_server =
            if the dynamicRegistration value was false in on_req_initialize *)
         let open Lsp.Types in
         let compiler_log = "lib/bs/.compiler.log" in
-        let build_ninja = "lib/bs/.build.ninja" in
+        let build_ninja = "lib/bs/build.ninja" in
         let file_watchers =
-          match extension_config.cache with
-          | Some {LSPConfig.projectConfig = Some {enable = Some true}} ->
-            [
-              FileSystemWatcher.create ~globPattern:(`Pattern compiler_log) ();
-              FileSystemWatcher.create ~globPattern:(`Pattern build_ninja) ();
-            ]
-          | _ ->
-            [FileSystemWatcher.create ~globPattern:(`Pattern compiler_log) ()]
+          project_files |> Hashtbl.to_seq_values
+          |> Seq.map (fun pf ->
+                 let folder_name =
+                   Filename.concat "**"
+                     (Filename.basename pf.LSPProjectFiles.root_path)
+                 in
+                 match extension_config.cache with
+                 | Some {LSPConfig.projectConfig = Some {enable = Some true}} ->
+                   [
+                     FileSystemWatcher.create
+                       ~globPattern:
+                         (`Pattern (Filename.concat folder_name compiler_log))
+                       ();
+                     FileSystemWatcher.create
+                       ~globPattern:
+                         (`Pattern (Filename.concat folder_name build_ninja))
+                       ();
+                   ]
+                 | _ ->
+                   [
+                     FileSystemWatcher.create
+                       ~globPattern:
+                         (`Pattern (Filename.concat folder_name compiler_log))
+                       ();
+                   ])
+          |> List.of_seq |> List.flatten
         in
         let registration_options =
           DidChangeWatchedFilesRegistrationOptions.create
