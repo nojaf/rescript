@@ -12,6 +12,13 @@ let write_file_to_tmp content : string =
     close_out_noerr channel;
     raise e
 
+let sync_project_config_cache root_path =
+  Cfg.readProjectConfigCache := false;
+  let uri = Uri.fromPath root_path in
+  match Packages.getPackage ~uri with
+  | None -> ()
+  | Some package -> Cache.cacheProject_lsp package
+
 (* This is a placeholder for the actual implementation of the completion function.
    It should return a list of completion items based on the current file and position. *)
 
@@ -153,7 +160,15 @@ class lsp_server =
             IncrementalCompilation.recreate_incremental_file_folder debug
               root_path;
             let projectFiles = LSPUtils.mk_project_files root_path in
-            Hashtbl.add project_files root_path projectFiles)
+            Hashtbl.add project_files root_path projectFiles;
+            let project_config_cache_enabled =
+              match extension_config.cache with
+              | Some {LSPConfig.projectConfig = Some {enable = Some true}} ->
+                true
+              | _ -> false
+            in
+            if project_config_cache_enabled then
+              sync_project_config_cache root_path)
           workspaceFolders
       | _ -> ());
 

@@ -39,3 +39,18 @@ let cacheProject (package : package) =
     let targetFile = targetFileFromLibBs libBs in
     writeCache targetFile cached;
     print_endline "\"OK\""
+
+let cacheProject_lsp (package : package) =
+  let cached =
+    {
+      projectFiles = package.projectFiles;
+      dependenciesFiles = package.dependenciesFiles;
+      pathsForModule = package.pathsForModule;
+    }
+  in
+  match BuildSystem.getLibBs package.rootPath with
+  | None -> Logs.err (fun m -> m "No libBs found for %s" package.rootPath)
+  | Some libBs ->
+    let targetFile = targetFileFromLibBs libBs in
+    writeCache targetFile cached;
+    Logs.debug (fun m -> m "Cache project %s" targetFile)
